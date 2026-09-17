@@ -1,0 +1,8 @@
+.claude/
+.DS_Store
+Thumbs.db
+desktop.ini
+test-saves/
+**/test-saves/
+.vscode/
+.idea/

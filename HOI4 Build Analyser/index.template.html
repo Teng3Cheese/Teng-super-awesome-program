@@ -1,0 +1,1219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>HOI4 Build Analyser</title>
+<style>
+  :root {
+    --bg: #14171c;
+    --panel: #1b1f27;
+    --panel2: #222733;
+    --border: #2e3543;
+    --text: #e6e9ef;
+    --muted: #8992a6;
+    --accent: #5fb0ff;
+    --accent2: #ffb454;
+    --good: #6fd08c;
+    --bad: #ff6b6b;
+    font-size: 15px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+  }
+  header {
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  header h1 { font-size: 18px; margin: 0; margin-right: auto; white-space: nowrap; }
+  header h1 small { display:block; font-weight:normal; color: var(--muted); font-size: 12px; }
+  button, .btn {
+    background: var(--panel2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 7px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+  }
+  button:hover { border-color: var(--accent); }
+  button:disabled { opacity: .4; cursor: not-allowed; }
+  input[type=file] { display: none; }
+
+  #dropzone {
+    margin: 16px 20px;
+    border: 2px dashed var(--border);
+    border-radius: 10px;
+    padding: 26px;
+    text-align: center;
+    color: var(--muted);
+    transition: border-color .15s, background .15s;
+  }
+  #dropzone.drag { border-color: var(--accent); background: #1a2230; }
+  #dropzone .actions { margin-top: 10px; display:flex; gap:10px; justify-content:center; flex-wrap: wrap; }
+
+  #progressWrap { margin: 0 20px 16px; display: none; }
+  #progressBar { height: 8px; background: var(--panel2); border-radius: 4px; overflow: hidden; }
+  #progressFill { height: 100%; width: 0%; background: var(--accent); transition: width .1s; }
+  #progressLabel { color: var(--muted); font-size: 12px; margin-top: 6px; }
+
+  #datasetInfo { margin: 0 20px 16px; color: var(--muted); font-size: 13px; display: none; }
+
+  #countryTabs {
+    margin: 0 20px 16px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .tab {
+    padding: 6px 12px;
+    border-radius: 14px;
+    border: 1px solid var(--border);
+    background: var(--panel2);
+    color: var(--text);
+    cursor: pointer;
+    font-size: 13px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    line-height: 1.3;
+  }
+  .tab .tabName { font-weight: 700; }
+  .tab .tabPlayer { font-size: 10.5px; color: var(--muted); font-weight: normal; }
+  .tab.active { background: var(--accent); color: #0b1220; border-color: var(--accent); }
+  .tab.active .tabPlayer { color: #0b1220; opacity: .7; }
+  .tab:disabled { opacity: .3; cursor: not-allowed; }
+
+  main { padding: 0 20px 40px; display: none; }
+  .grid { display: grid; grid-template-columns: 1.3fr 1fr; gap: 16px; }
+  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 16px;
+    margin-bottom: 16px;
+  }
+  .panel h2 { font-size: 14px; margin: 0 0 10px; color: var(--accent); text-transform: uppercase; letter-spacing: .04em; }
+  .panel .sub { color: var(--muted); font-size: 12px; margin: -6px 0 10px; }
+
+  .scroll { max-height: 340px; overflow-y: auto; }
+
+  .focusItem { display:flex; gap:10px; padding:5px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+  .focusItem:last-child { border-bottom: none; }
+  .focusItem .date { color: var(--muted); width: 90px; flex-shrink:0; }
+  .focusItem .name { flex: 1; }
+  .focusItem.inprogress .name { color: var(--accent2); }
+  .focusItem.baseline .date { color: #555c6b; }
+
+  .eventItem { display:flex; gap:10px; padding:4px 0; font-size: 12.5px; border-bottom: 1px solid var(--border); }
+  .eventItem:last-child { border-bottom: none; }
+  .eventItem .date { color: var(--muted); width: 90px; flex-shrink:0; }
+  .badge { display:inline-block; padding: 1px 7px; border-radius: 999px; font-size: 10.5px; margin-right: 6px; }
+  .badge.add { background: #1e3a2a; color: var(--good); }
+  .badge.rem { background: #3a1e1e; color: var(--bad); }
+  .badge.dec { background: #2a2f4a; color: var(--accent); }
+  .badge.cat { background: #3a2a1e; color: var(--accent2); }
+
+  #prodSliderWrap, #constructionSliderWrap { margin: 2px 0 14px; }
+  #prodSliderLabel, #constructionSliderLabel { color: var(--muted); font-size: 12px; margin-bottom: 4px; }
+  .factoryHeadline { font-size: 13px; margin-bottom: 10px; }
+  .factoryHeadline .queuedNote { color: var(--muted); }
+
+  .templateComp { color: var(--muted); font-size: 11px; font-weight: normal; margin-top: 2px; }
+  .unusedTemplates { margin-top: 10px; }
+  .unusedTemplates summary { cursor: pointer; color: var(--muted); font-size: 12.5px; padding: 4px 0; user-select: none; }
+  .unusedTemplates summary:hover { color: var(--text); }
+  .unusedTemplates table { margin-top: 6px; }
+  input[type=range] { width: 100%; accent-color: var(--accent); }
+
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  th, td { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 500; }
+
+  #ppChart { width: 100%; height: 160px; display:block; }
+  .ppNow { font-size: 22px; font-weight: 700; color: var(--accent2); }
+
+  .empty { color: var(--muted); font-size: 13px; padding: 10px 0; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>HOI4 Build Analyser<small>focus order · political power · research · production, per country over time</small></h1>
+  <button id="btnSaveCache" disabled>💾 Save analysis…</button>
+  <button id="btnLoadCache">📂 Load analysis…</button>
+  <input type="file" id="cacheInput" accept=".json" />
+</header>
+
+<div id="dropzone">
+  Drag a week's <code>.hoi4</code> autosave files here
+  <div class="actions">
+    <button id="btnPickFiles">Choose files…</button>
+    <button id="btnPickFolder">Choose folder…</button>
+  </div>
+  <input type="file" id="fileInput" accept=".hoi4" multiple />
+  <input type="file" id="folderInput" webkitdirectory directory multiple />
+</div>
+
+<div id="progressWrap">
+  <div id="progressBar"><div id="progressFill"></div></div>
+  <div id="progressLabel"></div>
+</div>
+
+<div id="datasetInfo"></div>
+
+<div id="countryTabs"></div>
+
+<main id="main"></main>
+
+<script>
+const TAGS = [
+  ["ENG","United Kingdom"], ["FRA","France"], ["USA","United States"], ["GER","Germany"],
+  ["ITA","Italy"], ["JAP","Japan"],
+  ["CAN","Canada"], ["SAF","South Africa"], ["RAJ","Raj"], ["AST","Australia"],
+  ["UKR","Ukraine"], ["MAN","Manchuria"], ["HUN","Hungary"], ["ROM","Romania"],
+  ["BUL","Bulgaria"], ["SPR","Spain"],
+];
+const TAG_NAMES = Object.fromEntries(TAGS);
+
+let loadedSaves = [];     // array of parseSave() results
+let timelines = null;     // buildAllTimelines() result
+let advisorRoster = new Map(); // characterId -> {name, slot, ideaToken, cost}, built once per batch
+let equipmentRoster = new Map(); // equipmentVariantId -> archetype id (e.g. "light_tank_chassis_1936"), built once per batch
+let selectedTag = null;
+let selectedFocusEraTreeId = null; // null = "show the most recent era" (reset whenever the selected country changes)
+let productionSliderIndex = null; // null = "show the latest snapshot" (reset whenever the selected country changes)
+let constructionSliderIndex = null; // same idea, for the separate Construction panel's own slider
+let worker = null;
+
+const el = (id) => document.getElementById(id);
+
+function fmtDate(d) {
+  if (!d) return "?";
+  const [y,m,day] = d.split(".");
+  const months = ["","Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  return `${months[+m]||m} ${day}, ${y}`;
+}
+
+// ---------- File ingestion ----------
+
+// Web Workers created as `new Worker("worker.js")` fail to load their script when this
+// page is opened directly via file:// (no server) — Chrome blocks a worker's own script
+// fetch in that case even though the main page's own <script src> tags load fine. To get
+// real background parsing without requiring a local server, the worker is instead built
+// from a Blob containing the full worker source (parser.js + the message handler below,
+// inlined) — a Blob URL has no file:// network fetch involved, so it works either way.
+// WORKER_BLOB_SOURCE is generated from parser.js + worker.js; keep it in sync with those
+// two files if their logic changes (see the two source files themselves for the original).
+const WORKER_BLOB_SOURCE = /*__WORKER_BLOB_SOURCE__*/;
+
+
+// If even a Blob-based worker somehow fails (very old browser, strict CSP), fall back
+// to parsing on the main thread rather than silently doing nothing.
+let workerBroken = false;
+let workerBlobUrl = null;
+function getWorker() {
+  if (!worker) {
+    if (!workerBlobUrl) {
+      const blob = new Blob([WORKER_BLOB_SOURCE], { type: "application/javascript" });
+      workerBlobUrl = URL.createObjectURL(blob);
+    }
+    worker = new Worker(workerBlobUrl);
+  }
+  return worker;
+}
+
+function parseOneFileViaWorker(file, text) {
+  const w = getWorker();
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error("worker timed out")), 15000);
+    const handler = (e) => {
+      if (e.data.name !== file.name) return;
+      clearTimeout(timeout);
+      w.removeEventListener("message", handler);
+      w.removeEventListener("error", errHandler);
+      resolve(e.data);
+    };
+    const errHandler = (e) => {
+      clearTimeout(timeout);
+      w.removeEventListener("message", handler);
+      w.removeEventListener("error", errHandler);
+      reject(e.error || new Error(e.message || "worker error"));
+    };
+    w.addEventListener("message", handler);
+    w.addEventListener("error", errHandler);
+    w.postMessage({ id: file.name, name: file.name, text });
+  });
+}
+
+async function handleFiles(fileList) {
+  const files = [...fileList].filter(f => f.name.toLowerCase().endsWith(".hoi4"));
+  if (!files.length) return;
+
+  el("progressWrap").style.display = "block";
+  el("progressLabel").textContent = `Parsing 0 / ${files.length}...`;
+  el("progressFill").style.width = "0%";
+
+  // Character/equipment ids only ever get ADDED over a game, never removed, so whichever
+  // save has seen the most of them (in practice, the save with the most content — i.e. the
+  // largest file) gives the most complete roster. Picking by file size (known without
+  // reading anything) is far cheaper than parsing every file's character_manager/equipments
+  // section just to find the latest one (each takes real time — see the comment on
+  // extractAdvisorRoster), and more reliable than "whichever file happens to be first",
+  // which could miss anything added later in the game.
+  const rosterFile = files.reduce((best, f) => (f.size || 0) > (best.size || 0) ? f : best, files[0]);
+  try {
+    const rosterText = await rosterFile.text();
+    advisorRoster = HOI4Parser.extractAdvisorRoster(rosterText);
+    equipmentRoster = HOI4Parser.extractEquipmentRoster(rosterText);
+  } catch (err) {
+    console.warn("Could not build advisor/equipment roster:", err);
+  }
+
+  const results = [];
+  let done = 0;
+
+  for (const file of files) {
+    const text = await file.text();
+    let parsed = null;
+
+    if (!workerBroken) {
+      try {
+        const result = await parseOneFileViaWorker(file, text);
+        if (result.ok) parsed = result.result;
+        else console.error("Worker failed to parse", file.name, result.error);
+      } catch (err) {
+        console.warn("Worker unavailable, falling back to main-thread parsing:", err);
+        workerBroken = true;
+      }
+    }
+
+    if (parsed === null && workerBroken) {
+      // Main-thread fallback. Yield to the event loop first so the progress bar paints.
+      await new Promise((r) => setTimeout(r, 0));
+      try {
+        parsed = HOI4Parser.parseSave(text);
+      } catch (err) {
+        console.error("Failed to parse", file.name, err);
+      }
+    }
+
+    if (parsed) {
+      // file.lastModified is when the OS actually wrote this .hoi4 (real-world time), as
+      // opposed to `parsed.date`, which is the in-game HOI4 calendar date — used for naming
+      // the saved-analysis JSON after the real dates this batch was played, not "1938.7.1".
+      parsed.fileLastModified = file.lastModified;
+      results.push(parsed);
+    }
+    done++;
+    el("progressFill").style.width = `${(done / files.length) * 100}%`;
+    el("progressLabel").textContent = `Parsing ${done} / ${files.length}...${workerBroken ? " (background workers unavailable, running on main thread)" : ""} (${file.name})`;
+  }
+
+  loadedSaves = results;
+  el("progressLabel").textContent = `Parsed ${done} / ${files.length}.`;
+  setTimeout(() => { el("progressWrap").style.display = "none"; }, 800);
+
+  onDatasetReady();
+}
+
+function onDatasetReady() {
+  timelines = TimelineBuilder.buildAllTimelines(loadedSaves, TAGS.map(t => t[0]));
+  const info = timelines.saves;
+  el("datasetInfo").style.display = "block";
+  const gameIds = new Set(info.map(s => s.gameUniqueId).filter(Boolean));
+  let warn = "";
+  if (gameIds.size > 1) {
+    warn = ` ⚠ These files come from ${gameIds.size} different games (mixed game_unique_id) — timelines below may not make sense.`;
+  }
+  el("datasetInfo").innerHTML = `Loaded <b>${info.length}</b> save(s), ${fmtDate(info[0]?.date)} → ${fmtDate(info[info.length-1]?.date)}.${warn}`;
+  el("btnSaveCache").disabled = false;
+
+  renderCountryTabs();
+  if (!selectedTag || !timelines.countries[selectedTag] || !hasData(selectedTag)) {
+    selectedTag = TAGS.map(t=>t[0]).find(hasData) || null;
+  }
+  renderCountryTabs();
+  renderMain();
+}
+
+function hasData(tag) {
+  const t = timelines && timelines.countries[tag];
+  return !!(t && (t.ppSeries.length || t.focusEvents.length || t.researchTimeline.length));
+}
+
+// ---------- Cache save/load ----------
+
+// DD-MM-YYYY in the browser's local timezone (not UTC — these are real-world save times,
+// so the date should match what the calendar said when the file was actually written).
+function fmtRealDate(ms) {
+  const d = new Date(ms);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${pad(d.getDate())}-${pad(d.getMonth() + 1)}-${d.getFullYear()}`;
+}
+
+function saveCache() {
+  const payload = { version: 3, savedAt: new Date().toISOString(), saves: loadedSaves, advisorRoster: [...advisorRoster.entries()], equipmentRoster: [...equipmentRoster.entries()] };
+  const blob = new Blob([JSON.stringify(payload)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+
+  // Named after the earliest real-world date in the batch (from each .hoi4 file's own OS
+  // timestamp, not the in-game calendar date — and just the start, not a "to" range) plus
+  // the mod/client build checksum — the short alphanumeric tag in parentheses at the end of
+  // the save's version string, e.g. `Operation Postern v1.19.2.0.a729 (674c)` -> "674c" — so
+  // a filename alone tells you both when this batch started and which mod build it came from.
+  const realDates = loadedSaves.map((s) => s.fileLastModified).filter((ms) => typeof ms === "number");
+  const dateLabel = realDates.length ? fmtRealDate(Math.min(...realDates)) : "analysis";
+  const versionStr = loadedSaves.find((s) => s.version)?.version || "";
+  const checksumMatch = /\(([^()]+)\)\s*$/.exec(versionStr);
+  const checksum = checksumMatch ? checksumMatch[1].replace(/[^A-Za-z0-9_-]/g, "") : null;
+
+  const label = checksum ? `${dateLabel}_${checksum}` : dateLabel;
+  a.href = url;
+  a.download = `hoi4_analysis_${label}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+function loadCache(file) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const payload = JSON.parse(reader.result);
+      loadedSaves = payload.saves || [];
+      advisorRoster = new Map(payload.advisorRoster || []);
+      equipmentRoster = new Map(payload.equipmentRoster || []);
+      onDatasetReady();
+    } catch (err) {
+      alert("Could not read that cache file: " + err.message);
+    }
+  };
+  reader.readAsText(file);
+}
+
+// ---------- UI: country tabs ----------
+
+// A tag's player(s) across the whole loaded batch: usually one name, but can be more than
+// one if a save shows a co-op second player, or if the country was handed off to a
+// different player partway through the week (each save only reflects who was playing it as
+// of that save, so this unions every name ever seen for the tag across every loaded save).
+function getPlayersForTag(tag) {
+  const names = [];
+  for (const save of loadedSaves) {
+    const forTag = save.playerCountries && save.playerCountries[tag];
+    if (!forTag) continue;
+    for (const n of forTag) if (!names.includes(n)) names.push(n);
+  }
+  return names;
+}
+
+function renderCountryTabs() {
+  const wrap = el("countryTabs");
+  wrap.innerHTML = "";
+  for (const [tag, name] of TAGS) {
+    const btn = document.createElement("button");
+    btn.className = "tab" + (tag === selectedTag ? " active" : "");
+    const players = getPlayersForTag(tag);
+    btn.innerHTML = `<span class="tabName">${escapeXML(name)}</span>` +
+      (players.length ? `<span class="tabPlayer">${escapeXML(players.join(", "))}</span>` : "");
+    const available = hasData(tag);
+    btn.disabled = !timelines || !available;
+    btn.title = timelines && !available ? "Not present in loaded save(s)" : "";
+    btn.onclick = () => { selectedTag = tag; selectedFocusEraTreeId = null; productionSliderIndex = null; constructionSliderIndex = null; renderCountryTabs(); renderMain(); };
+    wrap.appendChild(btn);
+  }
+}
+
+// ---------- UI: main panels ----------
+
+function collapseFocusEvents(events) {
+  // Fold consecutive in-progress snapshots of the same focus into one range.
+  const out = [];
+  let i = 0;
+  while (i < events.length) {
+    const e = events[i];
+    if (e.kind === "in_progress") {
+      let j = i;
+      let last = e;
+      while (j + 1 < events.length && events[j+1].kind === "in_progress" && events[j+1].id === e.id) {
+        j++; last = events[j];
+      }
+      out.push({ kind: "in_progress", id: e.id, fromDate: e.date, toDate: last.date, fromProgress: e.progress, toProgress: last.progress });
+      i = j + 1;
+    } else {
+      out.push(e);
+      i++;
+    }
+  }
+  return out;
+}
+
+function escapeXML(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+// Early game -> late game color, by topological depth in the tree (not by save date —
+// this is a property of the tree itself, independent of any playthrough). Interpolates
+// blue (shallow/early) to pink (deep/late) in HSL, which reads clearly on the dark panel.
+// Early-completed -> late-completed hue, by the actual date a focus was finished in this
+// playthrough (not by tree structure). Only meaningful for completed focuses — uncompleted
+// ones don't have a completion date and stay a flat neutral color (see renderFocusMapPanel).
+// Colors by completion ORDER (rank), not raw date. Dates alone bunch together everything
+// completed before tracking started (an unknown-order baseline) and everything completed
+// within the same save interval — with monthly saves, a dozen focuses can share one date.
+// The save's own `completed=` list is append-only and already reflects true chronological
+// order even for same-date entries, so ranking by position in that list gives every focus
+// a slightly different shade and makes "what came right after what" readable at a glance.
+function completionRankHue(rank, maxRank) {
+  const ratio = maxRank > 0 ? rank / maxRank : 0;
+  return 250 - ratio * 250; // full rainbow sweep: 250 blue-violet -> 180 cyan -> 120 green -> 60 yellow -> 0 red (earliest -> latest)
+}
+
+function renderFocusMapPanel(t, tag) {
+  const eras = t.focusTreeEras || [];
+  // Some countries switch their active focus tree mid-game (e.g. France: french_focus
+  // until capitulation, then free_french_focus) — default to the most recent era, but let
+  // the user flip back to see an earlier one.
+  const treeId = (selectedFocusEraTreeId && eras.some(e => e.treeId === selectedFocusEraTreeId))
+    ? selectedFocusEraTreeId
+    : t.focusTreeId;
+  const isLatestEra = treeId === t.focusTreeId;
+
+  let eraPicker = "";
+  if (eras.length > 1) {
+    eraPicker = `<div style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:10px;">` +
+      eras.map(e => {
+        const label = `${escapeXML(prettifyToken(e.treeId))} (${fmtDate(e.fromDate)}${e.fromDate!==e.toDate ? " – "+fmtDate(e.toDate) : ""})`;
+        const active = e.treeId === treeId;
+        // treeId values are always simple [A-Za-z0-9_]+ identifiers (validated at
+        // extraction time), so embedding one bare inside a single-quoted JS string here is safe.
+        return `<button class="tab${active ? " active" : ""}" onclick="selectedFocusEraTreeId='${e.treeId}';renderMain();">${label}</button>`;
+      }).join("") + `</div>`;
+  }
+
+  const tree = treeId && window.FOCUS_TREES && window.FOCUS_TREES[treeId];
+  if (!tree || !tree.focuses || !tree.focuses.length) {
+    return `<h2>National Focus Map</h2>${eraPicker}<div class="empty">No focus tree data bundled for tree "${escapeXML(treeId || "unknown")}" (used by this save). The mod may have changed since focus-trees.json was last generated — re-run extract-focus-trees.js.</div>`;
+  }
+  const focuses = tree.focuses;
+  const byId = new Map(focuses.map(f => [f.id, f]));
+  const completed = new Set(t.completedFocuses);
+  // An "in progress" marker only makes sense on the era that's actually current — on an
+  // older era the country has moved on, nothing there is still being worked toward.
+  const current = isLatestEra ? t.currentFocus : null;
+  // t.completedFocuses is already in true chronological order (see completionRankHue's
+  // comment) — rank within it, not raw date, drives the gradient.
+  const completionRank = new Map(t.completedFocuses.map((id, i) => [id, i]));
+  const maxRank = Math.max(0, t.completedFocuses.length - 1);
+
+  const COL_W = 92, ROW_H = 64, NODE_W = 82, NODE_H = 40;
+  const minX = Math.min(...focuses.map(f => f.absX));
+  const minY = Math.min(...focuses.map(f => f.absY));
+  const maxX = Math.max(...focuses.map(f => f.absX));
+  const maxY = Math.max(...focuses.map(f => f.absY));
+  const px = (x) => (x - minX) * COL_W + 20;
+  const py = (y) => (y - minY) * ROW_H + 20;
+  const width = px(maxX) + NODE_W + 20;
+  const height = py(maxY) + NODE_H + 20;
+
+  let edges = "";
+  for (const f of focuses) {
+    for (const group of f.prereqGroups) {
+      for (const reqId of group) {
+        const req = byId.get(reqId);
+        if (!req) continue;
+        const x1 = px(req.absX) + NODE_W / 2, y1 = py(req.absY) + NODE_H;
+        const x2 = px(f.absX) + NODE_W / 2, y2 = py(f.absY);
+        const midY = (y1 + y2) / 2;
+        const done = completed.has(f.id);
+        edges += `<path d="M${x1},${y1} C${x1},${midY} ${x2},${midY} ${x2},${y2}" fill="none" stroke="${done ? '#3d6b4a' : '#39404f'}" stroke-width="1.5"/>`;
+      }
+    }
+  }
+
+  let nodes = "";
+  for (const f of focuses) {
+    const x = px(f.absX), y = py(f.absY);
+    const isDone = completed.has(f.id);
+    const isCurrent = current && current.id === f.id;
+    let fill = "#2a2f3a", stroke = "#454d5e", textColor = "#9098ab";
+    if (isDone) {
+      const hue = completionRankHue(completionRank.get(f.id) ?? 0, maxRank);
+      fill = `hsl(${hue}, 35%, 16%)`; stroke = `hsl(${hue}, 55%, 55%)`; textColor = `hsl(${hue}, 60%, 78%)`;
+    }
+    if (isCurrent) { fill = "#4a3416"; stroke = "#ffb454"; textColor = "#ffd699"; }
+    const label = escapeXML(f.name.length > 22 ? f.name.slice(0, 21) + "…" : f.name);
+    // "#N" = the Nth focus this country actually completed, in chronological order — same
+    // order the color gradient above is keyed on, so the number and the color always agree.
+    const rank = isDone ? completionRank.get(f.id) : null;
+    const dateNote = isDone && t.completedFocusDates[f.id]
+      ? escapeXML(`#${rank + 1} · ${fmtDate(t.completedFocusDates[f.id])}`)
+      : (isCurrent ? `progress ${current.progress ?? "?"}` : "");
+    nodes += `<g class="focusNode">
+      <title>${escapeXML(f.name)} (${f.id})\nCost: ${f.cost * 7}d${dateNote ? "\n" + dateNote : ""}</title>
+      <rect x="${x}" y="${y}" width="${NODE_W}" height="${NODE_H}" rx="6" fill="${fill}" stroke="${stroke}" stroke-width="${isCurrent || isDone ? 2 : 1.5}"/>
+      <text x="${x + NODE_W/2}" y="${y + 16}" text-anchor="middle" font-size="9" fill="${textColor}" font-weight="${isDone||isCurrent?600:400}">${label}</text>
+      ${dateNote ? `<text x="${x + NODE_W/2}" y="${y + 30}" text-anchor="middle" font-size="8" fill="${textColor}" opacity="0.75">${dateNote}</text>` : ""}
+    </g>`;
+  }
+
+  const svg = `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" style="background:#14171c">${edges}${nodes}</svg>`;
+
+  return `<h2>National Focus Map</h2>
+    ${eraPicker}
+    <div class="sub">${focuses.length} focuses (disabled branches already removed) · ${completed.size} completed${current ? ` · currently: ${escapeXML(byId.get(current.id)?.name || prettifyToken(current.id))}` : ""} · completed focuses run a full rainbow by the order they were actually taken: <span style="color:hsl(250,60%,60%)">blue-violet</span> <span style="color:hsl(210,60%,60%)">blue</span> <span style="color:hsl(180,60%,55%)">cyan</span> <span style="color:hsl(120,55%,50%)">green</span> <span style="color:hsl(60,60%,55%)">yellow</span> <span style="color:hsl(0,65%,60%)">red</span> (1st → last), <span style="color:#ffd699">amber</span> = in progress, not-yet-taken focuses stay grey · hover a box for details</div>
+    <div style="overflow:auto; max-height:520px; border:1px solid var(--border); border-radius:6px;">${svg}</div>`;
+}
+
+function renderFocusPanel(t) {
+  const baseline = t.focusEvents.filter(e => e.kind === "completed_before_tracking");
+  const rest = collapseFocusEvents(t.focusEvents.filter(e => e.kind !== "completed_before_tracking"));
+
+  let html = `<h2>National Focus Timeline</h2>`;
+  if (baseline.length) {
+    html += `<div class="sub">${baseline.length} focus(es) already completed before the first loaded save (order preserved, exact timing unknown)</div>`;
+  }
+  html += `<div class="scroll">`;
+  if (!baseline.length && !rest.length) {
+    html += `<div class="empty">No focus data found for this country.</div>`;
+  }
+  for (const e of baseline) {
+    html += `<div class="focusItem baseline"><div class="date">before</div><div class="name">${e.id}</div></div>`;
+  }
+  for (const e of rest) {
+    if (e.kind === "completed") {
+      html += `<div class="focusItem"><div class="date">${fmtDate(e.date)}</div><div class="name">✓ ${e.id}</div></div>`;
+    } else {
+      const range = e.fromDate === e.toDate ? fmtDate(e.fromDate) : `${fmtDate(e.fromDate)} → ${fmtDate(e.toDate)}`;
+      html += `<div class="focusItem inprogress"><div class="date">${range}</div><div class="name">▶ ${e.id} (progress ${e.fromProgress ?? "?"}${e.toProgress!==e.fromProgress ? " → "+e.toProgress : ""})</div></div>`;
+    }
+  }
+  html += `</div>`;
+  return html;
+}
+
+function renderPPChartSVG(series) {
+  if (!series.length) return "";
+  const w = 560, h = 150, pad = 30;
+  const vals = series.map(p => p.political_power);
+  const min = Math.min(0, ...vals), max = Math.max(...vals, 1);
+  const x = (i) => pad + (i / Math.max(1, series.length - 1)) * (w - pad * 2);
+  const y = (v) => h - pad - ((v - min) / (max - min || 1)) * (h - pad * 2);
+  const pts = series.map((p, i) => `${x(i).toFixed(1)},${y(p.political_power).toFixed(1)}`).join(" ");
+  let ticks = "";
+  for (let i = 0; i < series.length; i += Math.max(1, Math.ceil(series.length / 6))) {
+    ticks += `<text x="${x(i)}" y="${h-8}" font-size="9" fill="#8992a6" text-anchor="middle">${fmtDate(series[i].date).replace(/, \d+$/,'')}</text>`;
+  }
+  return `<svg id="ppChart" viewBox="0 0 ${w} ${h}">
+    <line x1="${pad}" y1="${y(0)}" x2="${w-pad}" y2="${y(0)}" stroke="#2e3543" stroke-dasharray="3,3" />
+    <polyline fill="none" stroke="#ffb454" stroke-width="2" points="${pts}" />
+    ${ticks}
+  </svg>`;
+}
+
+function prettifyToken(token) {
+  return String(token).replace(/^[A-Z]{2,4}_/, "").replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function resolveCharacterName(token) {
+  if (!token) return "Unknown";
+  const names = window.CHARACTER_NAMES || {};
+  if (names[token]) return names[token];
+  const stripped = token.replace(/^[A-Z]{2,4}_/, "");
+  if (names[stripped]) return names[stripped];
+  return prettifyToken(token);
+}
+
+function resolveIdeaLabel(id) {
+  const laws = window.LAW_IDEAS || {};
+  if (laws[id]) return { isLaw: true, name: laws[id].name, category: laws[id].category, cost: laws[id].cost, level: laws[id].level };
+  return { isLaw: false, name: prettifyToken(id), category: null, cost: null, level: null };
+}
+
+function advisorDisplayName(characterId) {
+  const info = advisorRoster.get(characterId);
+  return info ? resolveCharacterName(info.ideaToken || info.name) : `#${characterId}`;
+}
+
+// equipmentRoster maps a production line's numeric equipment_variant_index to the
+// archetype key it's an instance of (e.g. "light_tank_chassis_1936" — see
+// extractEquipmentRoster in parser.js); EQUIPMENT_CATEGORIES maps that archetype key to the
+// human category it was defined under (see extract-equipment-categories.js). Both are raw
+// id -> data lookups built once per batch, resolved here at render time only — same pattern
+// as advisorDisplayName()/resolveIdeaLabel() above.
+// A player can design a fully custom equipment variant in-game (the Equipment Designer:
+// attach a module — e.g. a flamethrower — to a base chassis/airframe), and HOI4 names the
+// result by inserting the module's name into the middle of its base archetype's own id
+// (medium_tank_chassis_1936 -> medium_tank_flame_chassis_1936). That id was never written in
+// any common/units/equipment/*.txt file — it's generated at runtime — so it can never appear
+// in EQUIPMENT_CATEGORIES no matter how current that bundled data is. It always keeps the
+// SAME ending as its base archetype though (every chassis ends "_chassis_<year>", every
+// airframe "_airframe_<number>", regardless of what's inserted before that), so the ending
+// alone is enough to recover which file — and therefore category — it came from. This reuses
+// whatever category a REAL known archetype with the same ending already has, rather than
+// hardcoding a guess, so it can't drift out of sync with the bundled data.
+let equipmentSuffixCategoryCache = null;
+function findEquipmentCategoryBySuffix(archetype) {
+  const suffixMatch = /_(chassis|airframe)_\d+$/.exec(archetype);
+  if (!suffixMatch) return null;
+  if (!equipmentSuffixCategoryCache) {
+    equipmentSuffixCategoryCache = {};
+    for (const [key, meta] of Object.entries(window.EQUIPMENT_CATEGORIES || {})) {
+      const m = /_(chassis|airframe)_\d+$/.exec(key);
+      if (m && !equipmentSuffixCategoryCache[m[1]]) equipmentSuffixCategoryCache[m[1]] = meta;
+    }
+  }
+  return equipmentSuffixCategoryCache[suffixMatch[1]] || null;
+}
+
+function resolveEquipmentLabel(equipmentId) {
+  if (equipmentId === null || equipmentId === undefined) return { name: "Unknown", category: "Unknown", domain: "other" };
+  const archetype = equipmentRoster.get(equipmentId);
+  let meta = archetype ? (window.EQUIPMENT_CATEGORIES || {})[archetype] : null;
+  if (!meta && archetype) meta = findEquipmentCategoryBySuffix(archetype);
+  return {
+    name: archetype ? prettifyToken(archetype) : `Equipment #${equipmentId}`,
+    category: meta ? meta.category : "Unknown",
+    domain: meta ? meta.domain : "other",
+  };
+}
+
+// Walks a country's raw productionEvents chronologically and turns them into the
+// "stand-out but not cluttering" feed the production panel shows: brand-new equipment
+// CATEGORIES (a country's first ever tank, first ever carrier, etc.) are the headline
+// case, a new production line within a category already seen is a lesser note, and a
+// 2-digit-or-more jump in factories assigned to an existing line is the third case.
+// "established_before_tracking" baseline events never surface directly — they only seed
+// which categories already existed so the very first save's lines aren't all misreported
+// as "brand new".
+function buildProductionInsights(t) {
+  const seenCategories = new Set();
+  const notable = [];
+  for (const e of t.productionEvents) {
+    const info = resolveEquipmentLabel(e.equipmentId);
+    if (e.kind === "established_before_tracking") {
+      seenCategories.add(info.category);
+      continue;
+    }
+    if (e.kind === "new_equipment") {
+      const isNewCategory = info.category !== "Unknown" && !seenCategories.has(info.category);
+      seenCategories.add(info.category);
+      notable.push({ date: e.date, kind: isNewCategory ? "new_category" : "new_variant", info, factories: e.factories });
+    } else if (e.kind === "factory_jump") {
+      notable.push({ date: e.date, kind: "factory_jump", info, from: e.from, to: e.to, delta: e.delta });
+    }
+  }
+  return notable;
+}
+
+// Some law groups here (Procurement/military industry, Army Professionalism/training,
+// Mobilization Laws/conscription — identifiable by having a `level` field at all, unlike
+// flat groups like Economy/Trade Laws) are leveled progressions where `cost` is the price
+// PER LEVEL STEP, not a flat swap price: jumping from level 1 to level 3 costs 2x cost, not
+// 1x. This finds whichever law got removed from the SAME category in the SAME window (the
+// one the adopted law replaced) and, when both sides have a known level, prices the jump by
+// distance. Falls back to a plain 1-level swap when there's no leveled counterpart to diff
+// against (e.g. the very first law ever recorded in a category).
+function resolveLawEventCost(adoptedEvent, windowEvents) {
+  const info = resolveIdeaLabel(adoptedEvent.label);
+  if (info.cost == null) return { cost: null, levelDelta: null };
+  const removedInCategory = windowEvents.find((e) => {
+    if (e.kind !== "idea_removed") return false;
+    const rInfo = resolveIdeaLabel(e.label);
+    return rInfo.isLaw && rInfo.category === info.category;
+  });
+  if (removedInCategory) {
+    const removedInfo = resolveIdeaLabel(removedInCategory.label);
+    if (info.level != null && removedInfo.level != null) {
+      const levelDelta = Math.abs(info.level - removedInfo.level) || 1;
+      return { cost: info.cost * levelDelta, levelDelta };
+    }
+  }
+  return { cost: info.cost, levelDelta: 1 };
+}
+
+const HOI4_MONTH_DAYS = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]; // HOI4's calendar has no leap years
+
+// Days elapsed between two "Y.M.D.H" save dates (fractional, from the hour field), using each
+// real calendar month's actual length (28/30/31) rather than assuming a flat 30.
+function hoi4DaysBetween(dateA, dateB) {
+  const toDayNumber = (dateStr) => {
+    const m = /^(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(dateStr);
+    if (!m) return 0;
+    const [, y, mo, d, h] = m.map(Number);
+    let days = y * 365;
+    for (let i = 0; i < mo - 1; i++) days += HOI4_MONTH_DAYS[i];
+    return days + (d - 1) + h / 24;
+  };
+  return toDayNumber(dateB) - toDayNumber(dateA);
+}
+
+// Assumed baseline political power income, per the user: roughly 1 PP/day in typical play
+// (sometimes up to ~2/day with good modifiers) — always netted out below, scaled to the
+// actual number of calendar days in each interval, rather than a flat "30 a month".
+const ASSUMED_PP_PER_DAY = 1.0;
+
+// For each interval between consecutive saves: credits every EXACT known cost (advisor
+// hires from the roster, law changes from their real `cost = N` field incl. multi-level
+// jumps), nets out the assumed baseline income for that many days, and surfaces whatever's
+// left as an ESTIMATE of spending on things this tool can't otherwise identify (cheap
+// decisions especially — a 150 PP law wouldn't fully hide a 20 PP decision once the roughly
+// known income for the period is accounted for, the way a "must be negative to count" proof
+// would miss it). This is deliberately an estimate now, not a certainty: real income varies
+// (the user's own "sometimes up to 2/day"), so small flagged amounts can just mean income
+// ran a bit above baseline that period — treat large ones as the stronger signal.
+function computePPReconciliation(t) {
+  const out = [];
+  for (let i = 1; i < t.ppSeries.length; i++) {
+    const prev = t.ppSeries[i - 1], curr = t.ppSeries[i];
+    const delta = curr.political_power - prev.political_power;
+    const assumedIncome = hoi4DaysBetween(prev.date, curr.date) * ASSUMED_PP_PER_DAY;
+    const advisorSpend = t.advisorEvents
+      .filter((e) => e.kind === "appointed" && e.date === curr.date)
+      .reduce((sum, e) => sum + (advisorRoster.get(e.characterId)?.cost || 0), 0);
+    const windowEvents = t.ppEvents.filter((e) => e.date === curr.date);
+    const lawsThisWindow = windowEvents.filter((e) => e.kind === "idea_adopted" && resolveIdeaLabel(e.label).isLaw);
+    let lawSpend = 0, anyUnknownCostLaw = false;
+    for (const e of lawsThisWindow) {
+      const { cost } = resolveLawEventCost(e, windowEvents);
+      if (cost == null) anyUnknownCostLaw = true;
+      else lawSpend += cost;
+    }
+    const knownSpend = advisorSpend + lawSpend;
+    const estimatedOtherSpend = assumedIncome - knownSpend - delta;
+    if (estimatedOtherSpend < 5) continue; // negative/tiny just means income covered it (or ran above baseline) — not interesting
+    out.push({ date: curr.date, unexplained: estimatedOtherSpend, lawsThisWindow, anyUnknownCostLaw });
+  }
+  return out;
+}
+
+function renderPoliticalPowerPanel(t) {
+  let html = `<h2>Political Power</h2>`;
+  if (t.ppSeries.length) {
+    const now = t.ppSeries[t.ppSeries.length - 1].political_power;
+    html += `<div class="ppNow">${now.toFixed(1)} PP</div><div class="sub">as of ${fmtDate(t.ppSeries[t.ppSeries.length-1].date)}</div>`;
+    html += renderPPChartSVG(t.ppSeries);
+  } else {
+    html += `<div class="empty">No political power data found.</div>`;
+  }
+
+  if (t.currentAdvisors.length) {
+    html += `<table style="margin-top:10px"><thead><tr><th>Slot</th><th>Name</th><th>Cost</th></tr></thead><tbody>`;
+    for (const a of t.currentAdvisors) {
+      const info = advisorRoster.get(a.characterId);
+      html += `<tr><td>${escapeXML(prettifyToken(a.slot))}</td><td>${escapeXML(advisorDisplayName(a.characterId))}</td><td>${info?.cost ?? "?"} PP</td></tr>`;
+    }
+    html += `</tbody></table>`;
+  }
+
+  // One merged, chronological "what happened to our PP" feed: advisor changes (exact cost
+  // from the character roster), law changes (exact cost from the law's own `cost = N` field
+  // in the mod files — not inferred), and standalone unexplained-spend flags for whatever's
+  // left over after crediting all of that — instead of three disconnected lists that don't
+  // line up. Only negative leftovers get flagged (proof of extra spend); small positive
+  // leftovers are just normal income variation from minor PP-gain modifiers and aren't worth
+  // annotating.
+  const reconciliation = computePPReconciliation(t);
+
+  const advisorItems = t.advisorEvents.filter((e) => e.kind !== "appointed_before_tracking").map((e) => {
+    const info = advisorRoster.get(e.characterId);
+    const badge = e.kind === "appointed" ? `<span class="badge add">APPOINTED</span>` : `<span class="badge rem">LEFT</span>`;
+    const slotLabel = e.slot ? ` — ${escapeXML(prettifyToken(e.slot))}` : "";
+    const costLabel = e.kind === "appointed" && info?.cost != null ? ` (${info.cost} PP)` : "";
+    return { date: e.date, html: `${badge}${escapeXML(advisorDisplayName(e.characterId))}${slotLabel}${costLabel}` };
+  });
+
+  const lawItems = t.ppEvents.filter((e) => resolveIdeaLabel(e.label).isLaw).map((e) => {
+    const info = resolveIdeaLabel(e.label);
+    const badge = e.kind === "idea_adopted" ? `<span class="badge add">NEW</span>` : `<span class="badge rem">ENDED</span>`;
+    let costNote = "";
+    if (e.kind === "idea_adopted") {
+      const windowEvents = t.ppEvents.filter((ev) => ev.date === e.date);
+      const { cost, levelDelta } = resolveLawEventCost(e, windowEvents);
+      costNote = cost != null
+        ? ` (${cost} PP${levelDelta > 1 ? `, ${levelDelta} levels` : ""})`
+        : ` <span style="color:var(--muted)">(cost unknown)</span>`;
+    }
+    return { date: e.date, html: `${badge}${escapeXML(info.name)} <span style="color:var(--muted)">(${escapeXML(info.category)})</span>${costNote}` };
+  });
+
+  const unexplainedItems = reconciliation.map((r) => {
+    const detail = r.anyUnknownCostLaw
+      ? "Includes a law change this tool has no cost data for."
+      : "Could be a decision, a cheap law/spirit, or another action — estimated against an assumed ~1 PP/day baseline income.";
+    return {
+      date: r.date,
+      // Always a spend estimate, never a gain — the "-" and red badge make that
+      // unambiguous at a glance instead of relying on a sentence of caveats every line.
+      html: `<span class="badge dec" title="${escapeXML(detail)}">-${r.unexplained.toFixed(0)} PP?</span> unaccounted for`,
+    };
+  });
+
+  const merged = [...advisorItems, ...lawItems, ...unexplainedItems].sort((a, b) => HOI4Parser.dateSortKey(a.date) - HOI4Parser.dateSortKey(b.date));
+
+  html += `<div class="sub" style="margin-top:10px">What happened to it</div><div class="scroll">`;
+  if (!merged.length) html += `<div class="empty">No advisor/law changes or unexplained balance shifts detected between loaded saves.</div>`;
+  for (const item of [...merged].reverse()) {
+    html += `<div class="eventItem"><div class="date">${fmtDate(item.date)}</div><div>${item.html}</div></div>`;
+  }
+  html += `</div>`;
+
+  const otherEvents = t.ppEvents.filter((e) => !resolveIdeaLabel(e.label).isLaw);
+  html += `<details style="margin-top:10px"><summary class="sub" style="cursor:pointer">Other national spirits (${otherEvents.length} change${otherEvents.length===1?"":"s"}, usually free)</summary><div class="scroll">`;
+  for (const e of [...otherEvents].reverse()) {
+    const badge = e.kind === "idea_adopted" ? `<span class="badge add">NEW</span>` : `<span class="badge rem">EXPIRED</span>`;
+    html += `<div class="eventItem"><div class="date">${fmtDate(e.date)}</div><div>${badge}${escapeXML(prettifyToken(e.label))}</div></div>`;
+  }
+  html += `</div></details>`;
+  return html;
+}
+
+// How far ahead of (positive) or behind (negative) its designated year a tech was actually
+// researched, using each tech's own `start_year` field (the same value HOI4 itself uses to
+// calculate "ahead of time" research bonuses/penalties) against the real completion date.
+function techYearDiff(techId, dateStr) {
+  const raw = (window.TECH_YEARS || {})[techId];
+  if (raw == null || !dateStr) return null;
+  // Anything dated before the campaign's own start (1922, 1930, etc.) is just pre-game set
+  // dressing — every game here starts in 1936, so those are effectively "1936 techs", not
+  // actually ahead-of-schedule by however many years earlier they're nominally dated.
+  const designated = Math.max(raw, 1936);
+  const [y, mo] = dateStr.split(".").map(Number);
+  if (!y) return null;
+  const actualYear = y + (mo - 1) / 12; // fractional, so a mid-year diff isn't rounded away
+  return designated - actualYear;
+}
+
+// A year or more ahead is a big deal; even a several-month lead is worth a glance, so this
+// shows down to about half a year of lead — just filtering out pure noise below that.
+// Being LATE is only notable within a tight window: a huge modded tech tree makes "got to it
+// eventually, way later" the norm rather than the exception, so flagging every overdue tech
+// would just be noise — but slipping by just a few months (say researching a tech in January
+// that was nominally due the previous October) still says something about how close a
+// country was to keeping pace, so that narrow case is worth surfacing too.
+function techYearDiffLabel(diff) {
+  if (diff == null) return "";
+  if (diff >= 0.45) {
+    const magnitude = Math.min(diff, 8) / 8;
+    const lightness = 55 + magnitude * 15;
+    const color = `hsl(190, 70%, ${lightness}%)`;
+    // Sub-2-year gaps read more naturally in months than as "0.5y".
+    const text = diff < 2 ? `${Math.round(diff * 12)}mo ahead` : `${Math.round(diff)}y ahead`;
+    return ` <span style="color:${color}">(${text})</span>`;
+  }
+  if (diff < 0 && diff >= -0.25) {
+    const monthsLate = Math.round(-diff * 12);
+    if (monthsLate < 1) return "";
+    return ` <span style="color:var(--accent)">(${monthsLate}mo late)</span>`;
+  }
+  return "";
+}
+
+function renderResearchPanel(t) {
+  let html = `<h2>Research</h2>`;
+  const lastSnap = t.researchSnapshots[t.researchSnapshots.length - 1];
+  if (lastSnap && lastSnap.inProgress.length) {
+    html += `<div class="sub">Currently researching (as of ${fmtDate(lastSnap.date)}): ${lastSnap.inProgress.map(x=>x.id).join(", ")}</div>`;
+  }
+  html += `<div class="scroll">`;
+  if (!t.researchTimeline.length) html += `<div class="empty">No research data found.</div>`;
+  for (const tech of t.researchTimeline) {
+    const diff = techYearDiff(tech.id, tech.date);
+    html += `<div class="focusItem"><div class="date">${fmtDate(tech.date)}</div><div class="name">${tech.id}${techYearDiffLabel(diff)}</div></div>`;
+  }
+  html += `</div>`;
+  return html;
+}
+
+function renderProductionNotable(notable) {
+  if (!notable.length) return `<div class="empty">No standout production changes detected.</div>`;
+  let html = `<div class="scroll" style="max-height:180px;">`;
+  for (const n of notable) {
+    let badge, text;
+    if (n.kind === "new_category") {
+      badge = `<span class="badge cat">NEW CATEGORY</span>`;
+      text = `started producing <b>${escapeXML(n.info.category)}</b> — ${escapeXML(n.info.name)} (${n.factories} factories)`;
+    } else if (n.kind === "new_variant") {
+      badge = `<span class="badge add">NEW LINE</span>`;
+      text = `${escapeXML(n.info.category)}: ${escapeXML(n.info.name)} (${n.factories} factories)`;
+    } else {
+      badge = `<span class="badge dec">+${n.delta}</span>`;
+      text = `${escapeXML(n.info.category)}: ${escapeXML(n.info.name)} ${n.from}&rarr;${n.to} factories`;
+    }
+    html += `<div class="eventItem"><div class="date">${fmtDate(n.date)}</div><div>${badge}${text}</div></div>`;
+  }
+  html += `</div>`;
+  return html;
+}
+
+function renderProductionBreakdown(t, idx) {
+  const snap = t.productionSnapshots[idx];
+  let html = `<div id="prodSliderLabel">Factory breakdown — ${fmtDate(snap.date)}</div>`;
+  html += `<div class="scroll">`;
+  const labels = { military_lines: "Military (land equipment)", naval_lines: "Naval", ship_refit_lines: "Ship refits" };
+  let any = false;
+  for (const key of Object.keys(labels)) {
+    const lines = snap.lines[key] || [];
+    if (!lines.length) continue;
+    any = true;
+    html += `<table><thead><tr><th colspan="5">${labels[key]} (${lines.length})</th></tr>
+      <tr><th>Equipment</th><th>Category</th><th>Factories (active/req.)</th><th>Produced</th><th>Priority</th></tr></thead><tbody>`;
+    for (const l of lines) {
+      // Paradox saves omit several of these keys when the value is 0 (e.g. a line with
+      // no factories currently assigned), so missing means 0 here, not "unknown".
+      const info = resolveEquipmentLabel(l.equipment_id);
+      html += `<tr><td>${escapeXML(info.name)}</td><td>${escapeXML(info.category)}</td><td>${l.active_factories ?? 0}/${l.requested_factories ?? 0}</td><td>${(l.produced ?? 0).toFixed(1)}</td><td>${l.priority ?? 0}</td></tr>`;
+    }
+    html += `</tbody></table><br/>`;
+  }
+
+  if (!any) html += `<div class="empty">No active production lines this month.</div>`;
+  html += `</div>`;
+  return html;
+}
+
+// general_lines isn't equipment at all — it's the construction queue (factories, dockyards,
+// infrastructure, forts, etc. being built), a different schema entirely (see
+// parseConstructionLine in parser.js) and a different kind of "production" a player cares
+// about, so it gets its own panel with its own month slider rather than being one more table
+// buried inside the equipment breakdown.
+function renderConstructionBreakdown(t, idx) {
+  const snap = t.productionSnapshots[idx];
+  const construction = snap.lines.general_lines || [];
+  let html = `<div id="constructionSliderLabel">Construction queue — ${fmtDate(snap.date)}</div>`;
+
+  // Current owned mil/civ factory count comes from summing state building levels (see
+  // parseStateFactories in parser.js) — a country-level stat, not derivable from production
+  // lines alone. "amount" on a construction entry is how many NEW levels that project is
+  // building (not how many workers are on it — that's active_factories), so summing it by
+  // template type is what belongs in brackets as "how many more are coming".
+  if (snap.factories) {
+    const queuedAmount = (template) => construction.filter((l) => l.template === template).reduce((sum, l) => sum + (l.amount || 0), 0);
+    const queuedMil = queuedAmount("arms_factory");
+    const queuedCiv = queuedAmount("industrial_complex");
+    html += `<div class="factoryHeadline">Military Factories: <b>${snap.factories.mil}</b>${queuedMil ? `<span class="queuedNote"> (+${queuedMil} building)</span>` : ""} &nbsp;·&nbsp; Civilian Factories: <b>${snap.factories.civ}</b>${queuedCiv ? `<span class="queuedNote"> (+${queuedCiv} building)</span>` : ""}</div>`;
+  }
+
+  html += `<div class="scroll">`;
+  if (!construction.length) {
+    html += `<div class="empty">No active construction this month.</div>`;
+  } else {
+    html += `<table><thead><tr><th>Building</th><th>Location</th><th>Factories</th><th>Produced</th><th>Priority</th></tr></thead><tbody>`;
+    for (const l of construction) {
+      const buildingName = l.template ? prettifyToken(l.template) : "Unknown";
+      html += `<tr><td>${escapeXML(buildingName)}</td><td>${l.location ?? "?"}</td><td>${l.active_factories ?? 0}</td><td>${(l.produced ?? 0).toFixed(1)}</td><td>${l.priority ?? 0}</td></tr>`;
+    }
+    html += `</tbody></table>`;
+  }
+  html += `</div>`;
+  return html;
+}
+
+function renderConstructionPanel(t) {
+  let html = `<h2>Construction</h2>`;
+  if (!t.productionSnapshots.length) { html += `<div class="empty">No production data found.</div>`; return html; }
+
+  const lastIdx = t.productionSnapshots.length - 1;
+  const idx = constructionSliderIndex === null ? lastIdx : Math.min(Math.max(constructionSliderIndex, 0), lastIdx);
+
+  // Same rule as prodSlider: never replace this element mid-drag (see the comment on
+  // prodSliderWrap) — bindConstructionSlider() below only ever touches #constructionBreakdown.
+  html += `<div id="constructionSliderWrap">
+    <input type="range" id="constructionSlider" min="0" max="${lastIdx}" step="1" value="${idx}" ${lastIdx === 0 ? "disabled" : ""} />
+  </div>`;
+  html += `<div id="constructionBreakdown">${renderConstructionBreakdown(t, idx)}</div>`;
+  return html;
+}
+
+function bindConstructionSlider(t) {
+  const slider = el("constructionSlider");
+  if (!slider) return;
+  slider.oninput = (e) => {
+    constructionSliderIndex = Number(e.target.value);
+    el("constructionBreakdown").innerHTML = renderConstructionBreakdown(t, constructionSliderIndex);
+  };
+}
+
+function renderProductionPanel(t) {
+  let html = `<h2>Production</h2>`;
+  if (!t.productionSnapshots.length) { html += `<div class="empty">No production data found.</div>`; return html; }
+
+  html += `<div class="sub">Notable changes</div>`;
+  html += renderProductionNotable(buildProductionInsights(t));
+
+  const lastIdx = t.productionSnapshots.length - 1;
+  const idx = productionSliderIndex === null ? lastIdx : Math.min(Math.max(productionSliderIndex, 0), lastIdx);
+
+  // The <input type=range> itself must NEVER be replaced by an innerHTML write while a drag
+  // is in progress — the browser cancels a native drag the instant the element being dragged
+  // is removed from the DOM, which is exactly what re-rendering the whole panel on every
+  // "input" event used to do (made the slider feel click-only, unable to drag). So this
+  // element is only ever created here, once per full panel render (country switch, new
+  // batch); bindProductionSlider() below updates a separate #prodBreakdown div instead.
+  html += `<div id="prodSliderWrap">
+    <input type="range" id="prodSlider" min="0" max="${lastIdx}" step="1" value="${idx}" ${lastIdx === 0 ? "disabled" : ""} />
+  </div>`;
+  html += `<div id="prodBreakdown">${renderProductionBreakdown(t, idx)}</div>`;
+  return html;
+}
+
+function bindProductionSlider(t) {
+  const slider = el("prodSlider");
+  if (!slider) return;
+  slider.oninput = (e) => {
+    productionSliderIndex = Number(e.target.value);
+    el("prodBreakdown").innerHTML = renderProductionBreakdown(t, productionSliderIndex);
+  };
+}
+
+// Division templates come from a GLOBAL save-wide list (see parseDivisionTemplates in
+// parser.js), matched against how many currently-deployed divisions reference each one
+// (parseUnitCounts) — there's no explicit "decommissioned" flag in the save itself, so a
+// template with zero current divisions is treated as retired/unused and tucked into a
+// native <details> dropdown instead of cluttering the main list.
+//
+// The "Changes" feed above the current-state table is an EVENT log (t.armyEvents), not a
+// month-by-month slider — a template's division count can sit unchanged for a year of
+// loaded saves, so scrolling through dozens of identical snapshots to find the couple of
+// months that mattered isn't useful; this only ever has an entry when something actually changed.
+function formatComposition(tally) {
+  if (!tally || !tally.length) return "";
+  return tally.map(({ type, count }) => `${count}x ${prettifyToken(type)}`).join(", ");
+}
+
+function renderTemplateRow(tpl) {
+  const parts = [];
+  const combatStr = formatComposition(tpl.combat);
+  const regSupportStr = formatComposition(tpl.regimentalSupport);
+  const supportStr = formatComposition(tpl.support);
+  if (combatStr) parts.push(combatStr);
+  if (regSupportStr) parts.push(`Reg. Support: ${regSupportStr}`);
+  if (supportStr) parts.push(`Support: ${supportStr}`);
+  const compHtml = parts.length ? `<div class="templateComp">${escapeXML(parts.join(" · "))}</div>` : `<div class="templateComp">No composition data</div>`;
+  return `<tr><td><b>${escapeXML(tpl.name)}</b>${compHtml}</td><td>${tpl.count}</td></tr>`;
+}
+
+// Each badge carries the ACTION (new/deleted/±delta); the text never repeats what the badge
+// already said (no "raised"/"deleted" verb next to a badge already saying NEW/DELETED, no
+// full "0 -> 33" math next to a badge already saying "+33") — one fact, one place.
+function renderArmyEvents(events) {
+  if (!events.length) return `<div class="empty">No army changes detected.</div>`;
+  let html = `<div class="scroll" style="max-height:180px;">`;
+  for (const e of events) {
+    let badge, text;
+    if (e.kind === "established_before_tracking") {
+      badge = `<span class="badge dec">BASELINE</span>`;
+      text = `${escapeXML(e.name)} (${e.count} divisions)`;
+    } else if (e.kind === "new_template") {
+      badge = `<span class="badge add">NEW</span>`;
+      text = `${escapeXML(e.name)} (${e.count} divisions)`;
+    } else if (e.kind === "template_removed") {
+      badge = `<span class="badge rem">DELETED</span>`;
+      text = `${escapeXML(e.name)} (had ${e.count} divisions)`;
+    } else {
+      const delta = e.to - e.from;
+      badge = delta > 0 ? `<span class="badge add">+${delta}</span>` : `<span class="badge rem">${delta}</span>`;
+      text = `${escapeXML(e.name)} — now ${e.to} divisions`;
+    }
+    html += `<div class="eventItem"><div class="date">${fmtDate(e.date)}</div><div>${badge}${text}</div></div>`;
+  }
+  html += `</div>`;
+  return html;
+}
+
+function renderArmyPanel(t) {
+  let html = `<h2>Army</h2>`;
+  const templates = t.currentArmyTemplates || [];
+  if (!templates.length) { html += `<div class="empty">No division template data found.</div>`; return html; }
+
+  html += `<div class="sub">Changes</div>`;
+  html += renderArmyEvents(t.armyEvents || []);
+
+  const active = templates.filter((tpl) => tpl.count > 0).sort((a, b) => b.count - a.count);
+  const unused = templates.filter((tpl) => tpl.count === 0).sort((a, b) => a.name.localeCompare(b.name));
+
+  html += `<div class="scroll">`;
+  if (!active.length) {
+    html += `<div class="empty">No divisions currently deployed from any template.</div>`;
+  } else {
+    html += `<table><thead><tr><th>Template</th><th>Divisions</th></tr></thead><tbody>`;
+    for (const tpl of active) html += renderTemplateRow(tpl);
+    html += `</tbody></table>`;
+  }
+
+  if (unused.length) {
+    html += `<details class="unusedTemplates"><summary>Unused templates (${unused.length})</summary>
+      <table><thead><tr><th>Template</th><th>Divisions</th></tr></thead><tbody>`;
+    for (const tpl of unused) html += renderTemplateRow(tpl);
+    html += `</tbody></table></details>`;
+  }
+  html += `</div>`;
+  return html;
+}
+
+function renderMain() {
+  const main = el("main");
+  if (!selectedTag || !timelines) { main.style.display = "none"; return; }
+  main.style.display = "block";
+  const t = timelines.countries[selectedTag];
+  main.innerHTML = `
+    <div class="panel">${renderFocusMapPanel(t, selectedTag)}</div>
+    <div class="grid">
+      <div>
+        <div class="panel">${renderPoliticalPowerPanel(t)}</div>
+        <div class="panel">${renderArmyPanel(t)}</div>
+      </div>
+      <div>
+        <div class="panel">${renderResearchPanel(t)}</div>
+        <div class="panel" id="productionPanel">${renderProductionPanel(t)}</div>
+        <div class="panel" id="constructionPanel">${renderConstructionPanel(t)}</div>
+      </div>
+    </div>
+  `;
+  bindProductionSlider(t);
+  bindConstructionSlider(t);
+}
+
+// ---------- Wiring ----------
+
+const dz = el("dropzone");
+dz.addEventListener("dragover", (e) => { e.preventDefault(); dz.classList.add("drag"); });
+dz.addEventListener("dragleave", () => dz.classList.remove("drag"));
+dz.addEventListener("drop", (e) => {
+  e.preventDefault();
+  dz.classList.remove("drag");
+  handleFiles(e.dataTransfer.files);
+});
+
+el("btnPickFiles").onclick = () => el("fileInput").click();
+el("btnPickFolder").onclick = () => el("folderInput").click();
+el("fileInput").onchange = (e) => handleFiles(e.target.files);
+el("folderInput").onchange = (e) => handleFiles(e.target.files);
+
+el("btnSaveCache").onclick = saveCache;
+el("btnLoadCache").onclick = () => el("cacheInput").click();
+el("cacheInput").onchange = (e) => { if (e.target.files[0]) loadCache(e.target.files[0]); };
+</script>
+
+<script>window.FOCUS_TREES = /*__FOCUS_TREES__*/;</script>
+<script>window.LAW_IDEAS = /*__LAW_IDEAS__*/;</script>
+<script>window.CHARACTER_NAMES = /*__CHARACTER_NAMES__*/;</script>
+<script>window.TECH_YEARS = /*__TECH_YEARS__*/;</script>
+<script>window.EQUIPMENT_CATEGORIES = /*__EQUIPMENT_CATEGORIES__*/;</script>
+<script>/*__PARSER_SOURCE__*/</script>
+<script>/*__TIMELINE_BUILDER_SOURCE__*/</script>
+</body>
+</html>

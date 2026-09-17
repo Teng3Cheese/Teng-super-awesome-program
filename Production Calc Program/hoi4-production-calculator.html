@@ -1,0 +1,1376 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>HOI4 Mil Ratio Calculator</title>
+<style>
+  body {
+    font-family: Arial, Helvetica, sans-serif;
+    font-size: 14px;
+    color: #111;
+    background: #fff;
+    max-width: 900px;
+    margin: 20px auto;
+    padding: 0 16px 60px;
+  }
+  h1 { font-size: 20px; margin-bottom: 4px; }
+  h2 { font-size: 16px; margin-top: 28px; border-bottom: 1px solid #999; padding-bottom: 4px; }
+  p.help { color: #444; margin-top: 4px; }
+  #totalMilsSection { margin: 16px 0; padding: 10px; border: 1px solid #999; }
+  #totalMilsSection label { font-weight: bold; }
+  #totalMilsSection input[type="range"] { width: 300px; vertical-align: middle; margin-left: 10px; }
+  #totalMilsSection input[type="number"] { width: 70px; }
+
+  #saveLoadSection { margin: 10px 0; padding: 10px; border: 1px solid #999; }
+  #saveStatus { margin-left: 10px; color: #444; font-size: 12px; }
+
+  #ocrSection { margin: 10px 0; padding: 10px; border: 1px solid #999; }
+  #ocrStatus { margin-left: 10px; color: #444; font-size: 12px; }
+  #ocrStatus.warn { color: #b00000; font-weight: bold; }
+
+  #summary { margin: 16px 0; padding: 10px; border: 1px solid #999; background: #f5f5f5; line-height: 1.7; }
+  #summary .warn { color: #b00000; font-weight: bold; }
+
+  fieldset.category { margin-bottom: 20px; border: 1px solid #999; padding: 10px 14px 14px; }
+  fieldset.category.cat-disabled { opacity: 0.5; }
+  fieldset.category legend { font-weight: bold; padding: 0 4px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; width: 100%; }
+  fieldset.category legend label { font-weight: normal; font-size: 12px; margin-right: 0; }
+  fieldset.category legend input.cat-name { font-weight: bold; font-size: 14px; flex: 1 1 auto; min-width: 90px; }
+
+  .domain-toggle { margin-left: auto; display: flex; gap: 4px; }
+  .domain-pill { display: inline-flex; align-items: center; cursor: pointer; gap: 2px; }
+  .domain-pill input[type="radio"] { margin: 0; }
+  .pill-text { padding: 2px 9px; border-radius: 10px; font-size: 11px; font-weight: bold; background: #eee; color: #777; }
+  input.cat-domain:checked + .pill-air { background: #d9556b; color: #fff; }
+  input.cat-domain:checked + .pill-ground { background: #8faa4c; color: #223018; }
+  .domain-toggle.locked .pill-text { opacity: 0.55; }
+  .domain-toggle.locked .domain-pill { cursor: not-allowed; }
+  .alloc-row { margin: 10px 0; }
+  .alloc-row label { display: block; margin: 4px 0; }
+  .alloc-row input[type="number"] { width: 70px; margin-left: 6px; }
+
+  .type-row { margin: 10px 0; }
+
+  .category-result { margin-top: 10px; padding: 6px; background: #eef; border: 1px solid #99c; }
+
+  table.item-table { border-collapse: collapse; margin-top: 8px; width: 100%; }
+  table.item-table th, table.item-table td { border: 1px solid #999; padding: 4px 6px; text-align: left; font-size: 13px; }
+  table.item-table input[type="text"] { width: 140px; }
+  table.item-table input[type="number"] { width: 70px; }
+  table.item-table select.item-equip-select { width: 140px; font-size: 12px; }
+  table.item-table input.item-equip-custom { margin-top: 3px; }
+
+  .item-reorder-cell { width: 1%; white-space: nowrap; cursor: grab; }
+  .reorder-stack { display: flex; flex-direction: column; gap: 1px; }
+  .reorder-btn { font-size: 8px; line-height: 1; padding: 2px 4px; background: #eee; border: 1px solid #999; border-radius: 2px; }
+  .reorder-btn:disabled { opacity: 0.3; cursor: default; }
+  .item-row.dragging { opacity: 0.4; }
+  .item-row.drag-over-top { box-shadow: inset 0 2px 0 0 #333; }
+  .item-row.drag-over-bottom { box-shadow: inset 0 -2px 0 0 #333; }
+
+  .cat-reorder-stack { cursor: grab; }
+  fieldset.category.dragging { opacity: 0.4; }
+  fieldset.category.drag-over-top { box-shadow: inset 0 3px 0 0 #333; }
+  fieldset.category.drag-over-bottom { box-shadow: inset 0 -3px 0 0 #333; }
+
+  .plane-section select.plane-equip-select { margin-left: 4px; }
+  .plane-section input.plane-equip-custom { margin-left: 6px; }
+
+  button { cursor: pointer; }
+  .remove-cat-btn, .remove-item-btn { color: #b00000; }
+  #addCategoryBtn { margin-top: 6px; padding: 6px 14px; font-weight: bold; }
+
+  template { display: none; }
+
+  .layout { display: grid; grid-template-columns: 1fr 360px; gap: 24px; align-items: start; }
+  @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }
+  .sidePanel { position: sticky; top: 16px; max-height: calc(100vh - 32px); overflow-y: auto; }
+  @media (max-width: 900px) { .sidePanel { position: static; max-height: none; overflow-y: visible; } }
+
+  /* One continuous strip of cards, flush against each other, no gaps or per-card shading splits */
+  .mil-card-list { border: 1px solid #1a1a1a; }
+  .mil-card {
+    display: grid;
+    grid-template-columns: auto 1fr auto auto;
+    grid-template-rows: auto auto;
+    column-gap: 6px; row-gap: 3px;
+    background: #24352b; color: #eee;
+    padding: 4px 6px 9px;
+    border-bottom: 1px solid #16211a;
+    position: relative;
+  }
+  .mil-card:last-child { border-bottom: none; }
+  .mil-card.card-dragging { opacity: 0.4; }
+  .mil-card.card-drag-over-top { box-shadow: inset 0 2px 0 0 #f0b429; }
+  .mil-card.card-drag-over-bottom { box-shadow: inset 0 -2px 0 0 #f0b429; }
+
+  /* Slightly green-tinted gray strip behind the name/count row, to set it apart from the body below. */
+  .mil-card-headerbg { grid-column: 1 / -1; grid-row: 1; align-self: stretch; background: #454f48; border-radius: 2px; margin: -2px -3px; }
+
+  .mil-card-reorder { grid-column: 1; grid-row: 1 / 3; align-self: center; z-index: 1; display: flex; flex-direction: column; gap: 2px; cursor: grab; }
+  .mil-card-reorder .reorder-btn { background: #10170f; color: #9fb0a2; border-color: #000; }
+  .mil-card-reorder .reorder-btn:disabled { opacity: 0.25; }
+
+  /* col 2: name on top, icon below. col 3: the x10/x5 stack, stuck to the grid's left side.
+     col 4: count on top (centered over the grid), the grid itself below. */
+  .mil-card-top-left { grid-column: 2; grid-row: 1; align-self: start; display: flex; align-items: center; gap: 6px; min-width: 0; z-index: 1; }
+  .mil-card-badge { background: #111; color: #ddd; font-size: 10px; font-weight: bold; padding: 1px 5px; border-radius: 2px; min-width: 14px; text-align: center; flex-shrink: 0; }
+  .mil-card-name { flex: 1 1 auto; min-width: 0; font-size: 13px; font-weight: bold; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .mil-card-icon {
+    grid-column: 2; grid-row: 2;
+    align-self: start; justify-self: stretch;
+    height: 66px; max-width: 160px;
+    background: #10170f; border: 1px solid #050805; border-radius: 2px;
+  }
+
+  .mil-card-count {
+    grid-column: 4; grid-row: 1; justify-self: center; align-self: end; z-index: 1;
+    background: #111; color: #ffd97a; font-family: "Courier New", monospace; font-weight: bold; font-size: 12px; padding: 1px 7px; border-radius: 2px; border: 1px solid #000;
+  }
+
+  /* Two square badges stacked to exactly fill the grid's total height (3*20px boxes + 2*3px gaps = 66px). */
+  .mil-mult-stack { grid-column: 3; grid-row: 2; align-self: start; display: flex; flex-direction: column; gap: 2px; height: 66px; flex-shrink: 0; }
+  .mil-mult-badge {
+    width: 32px; height: 32px; flex: 0 0 32px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11px; font-weight: bold; color: #4d5a4e; background: #10170f; border: 1px solid #000; border-radius: 3px;
+  }
+  .mil-mult-badge.hot { color: #2a1a00; background: #f0b429; border-color: #a97a10; }
+
+  .mil-card-grid {
+    grid-column: 4; grid-row: 2; justify-self: end; align-self: start;
+    display: grid; grid-template-columns: repeat(5, 20px); grid-template-rows: repeat(3, 20px);
+    gap: 3px;
+  }
+  .mil-unit {
+    width: 20px; height: 20px; background: #16241a; border: 1px solid #0a130d; border-radius: 2px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 7px; font-weight: bold; line-height: 1;
+  }
+  .mil-unit.lit { background: #7CFC00; border-color: #3f8f00; color: #143008; }
+</style>
+</head>
+<body>
+
+<div class="layout">
+  <div class="mainCol">
+
+    <h1>HOI4 Mil Ratio Calculator</h1>
+    <p class="help">Set your total military factories, then split them across categories. Each category can be switched <strong>on/off</strong> with its checkbox, and uses one of three ways to claim mils: a <strong>fixed</strong> amount (comes off the top first), a <strong>%</strong> of whatever's left after fixed categories, or a <strong>ratio</strong> share of whatever's left after that &mdash; e.g. ratio values of 1, 2 and 3 on three categories split that remainder 16% / 33% / 50%. Ratio mode is the one to reach for if you'll be flipping categories on and off, since the remaining active ones just re-normalize automatically. Each category is also either <strong>Simple equipment</strong> (one item gets the whole category) or <strong>Multiple equipment ratio</strong> (several items split the category's mils by quantity needed &times; IC cost, so every item gets built in the ratio you actually need). Pick equipment from the <strong>Air</strong>/<strong>Ground</strong> categorized dropdown, or fall back to Custom for anything not listed &mdash; the toggle locks once a category has equipment in it, so switching domains mid-setup can't scramble your picks. Each item also has a <strong>Boost %</strong> override &mdash; use it when losses of one equipment type are running ahead of the rest, so that item temporarily gets a bigger cut of the category's mils (at the expense of the others in the same template). Navy is ignored.</p>
+
+    <section id="totalMilsSection">
+      <label for="totalMils">Total mils (military factories):
+        <input type="number" id="totalMils" value="60" min="0" step="1">
+        <input type="range" id="totalMilsRange" min="0" max="300" step="1" value="60">
+      </label>
+    </section>
+
+    <section id="saveLoadSection">
+      <button id="saveBtn" type="button">Save to file</button>
+      <button id="loadBtn" type="button">Load from file</button>
+      <input type="file" id="loadFileInput" accept="application/json,.json" style="display:none;">
+      <span id="saveStatus"></span>
+      <p class="help" style="font-size:12px; margin: 6px 0 0;">Save downloads a small .json file with everything on this page &mdash; keep it in your project folder next to the .html file. Load lets you pick that file back up. Send both files to a friend and Load works the same way for them.</p>
+    </section>
+
+    <section id="ocrSection">
+      <p class="help" style="font-size:12px; margin: 0 0 6px; padding: 6px 8px; background:#fff3cd; border:1px solid #ccb14d;"><strong>Experimental:</strong> screenshot reading is unreliable and can misread or mislabel items. It always creates an editable category &mdash; check every row against the screenshot before trusting it.</p>
+      <button id="ocrBtn" type="button">Import from screenshot&hellip;</button>
+      <input type="file" id="ocrFileInput" accept="image/*" style="display:none;">
+      <span id="ocrStatus"></span>
+      <progress id="ocrProgress" max="100" value="0" style="display:none; vertical-align:middle; margin-left:8px; width:160px;"></progress>
+      <p class="help" style="font-size:12px; margin: 6px 0 0;">Screenshot <strong>just the Equipment Cost box</strong> if you can &mdash; the whole window sometimes works, but with Base Stats / Combat Stats sitting right next to it at the same height, the text reader can occasionally blend the columns together into nonsense. A tighter crop reads far more reliably. Then just <strong>paste it (Ctrl+V)</strong> anywhere on this page &mdash; or use the button if you'd rather pick a saved file. First use each session needs to load a small local text-reading library &mdash; everything after that runs offline. Always double-check the numbers it finds.</p>
+      <details id="ocrRawTextBox" style="display:none; margin-top:6px;">
+        <summary style="cursor:pointer; font-size:12px; color:#444;">Raw text the reader saw (for troubleshooting)</summary>
+        <pre id="ocrRawText" style="white-space:pre-wrap; font-size:12px; background:#f5f5f5; border:1px solid #999; padding:8px; margin-top:4px; max-height:200px; overflow:auto;"></pre>
+      </details>
+    </section>
+
+    <h2>Categories</h2>
+    <div id="categories"></div>
+    <button id="addCategoryBtn" type="button">+ Add category</button>
+
+    <div id="summary"></div>
+
+  </div>
+
+  <aside class="sidePanel">
+    <div id="sidePanelContent" class="mil-card-list"></div>
+  </aside>
+</div>
+
+<template id="categoryTemplate">
+  <fieldset class="category" draggable="true">
+    <legend>
+      <span class="reorder-stack cat-reorder-stack" title="Drag to reorder, or use the arrows">
+        <button type="button" class="reorder-btn reorder-up" title="Move up">&#9650;</button>
+        <button type="button" class="reorder-btn reorder-down" title="Move down">&#9660;</button>
+      </span>
+      <label><input type="checkbox" class="cat-enabled" checked> On</label>
+      <label title="Unchecking this hides the category's cards from the Assign to panel, without changing the calculations."><input type="checkbox" class="cat-visible" checked> Show</label>
+      <input type="text" class="cat-name" value="New Category">
+      <button type="button" class="remove-cat-btn">Remove category</button>
+      <span class="domain-toggle">
+        <label class="domain-pill"><input type="radio" class="cat-domain" value="air" checked><span class="pill-text pill-air">Air</span></label>
+        <label class="domain-pill"><input type="radio" class="cat-domain" value="ground"><span class="pill-text pill-ground">Ground</span></label>
+      </span>
+    </legend>
+
+    <div class="alloc-row">
+      <label><input type="radio" class="alloc-mode" value="fixed" checked> Fixed amount of mils
+        <input type="number" class="alloc-fixed-value" value="10" min="0" step="1">
+      </label>
+      <label><input type="radio" class="alloc-mode" value="percent"> % of the mils left over after fixed categories
+        <input type="number" class="alloc-percent-value" value="50" min="0" max="100" step="1">
+      </label>
+      <label><input type="radio" class="alloc-mode" value="ratio"> Ratio share of whatever's left after fixed &amp; percent
+        <input type="number" class="alloc-ratio-value" value="1" min="0" step="1">
+      </label>
+    </div>
+
+    <div class="type-row">
+      <label>What does this category build?
+        <select class="template-type">
+          <option value="plane">Simple equipment</option>
+          <option value="army">Multiple equipment ratio</option>
+        </select>
+      </label>
+    </div>
+
+    <div class="plane-section">
+      <label>Equipment: <select class="plane-equip-select"></select></label>
+      <input type="text" class="plane-equip-custom" placeholder="Custom equipment name" style="display:none;">
+      <input type="hidden" class="plane-name" value="">
+    </div>
+
+    <div class="army-section" style="display:none;">
+      <table class="item-table">
+        <thead>
+          <tr><th></th><th>Equipment</th><th>Qty needed</th><th>IC cost/unit</th><th>Boost %</th><th>Share</th><th></th></tr>
+        </thead>
+        <tbody class="item-rows"></tbody>
+      </table>
+      <button type="button" class="add-item-btn">+ Add equipment</button>
+    </div>
+
+    <div class="category-result">
+      Mils assigned to this category: <strong class="cat-mils-result">0</strong>
+    </div>
+  </fieldset>
+</template>
+
+<template id="itemRowTemplate">
+  <tr class="item-row" draggable="true">
+    <td class="item-reorder-cell">
+      <span class="reorder-stack">
+        <button type="button" class="reorder-btn reorder-up" title="Move up">&#9650;</button>
+        <button type="button" class="reorder-btn reorder-down" title="Move down">&#9660;</button>
+      </span>
+    </td>
+    <td>
+      <select class="item-equip-select"></select>
+      <input type="text" class="item-equip-custom" placeholder="Custom name" style="display:none;">
+      <input type="hidden" class="item-name" value="">
+    </td>
+    <td><input type="number" class="item-qty" value="0" min="0" step="1"></td>
+    <td><input type="number" class="item-cost" value="1" min="0" step="0.1"></td>
+    <td><input type="number" class="item-boost" value="0" step="5" title="Temporary override, e.g. 20 = this item gets a bigger cut of the category's mils to cover losses; -20 = smaller cut."></td>
+    <td class="item-share-result">0%</td>
+    <td><button type="button" class="remove-item-btn">x</button></td>
+  </tr>
+</template>
+
+<script>
+(function () {
+  // Persisted display order for the production preview panel — a plain array of equipment
+  // names, independent of which category/item produces them. See recompute() for how it's kept in sync.
+  var panelOrder = [];
+  var isApplyingState = false;
+
+  var catCounter = 0;
+  var itemCounter = 0;
+
+  // Equipment icons — embedded as data URIs so nothing needs picking each session. Keyed by the
+  // exact equipment name (same string as EQUIPMENT_CATALOG entries, or a Custom item's own name).
+  // To add art: drop a PNG named exactly after the equipment (e.g. "Infantry Equipment.png") into
+  // the icons/ folder next to this file, then ask for it to be embedded — this object gets a new
+  // entry per icon, nothing else about the page changes.
+  var EQUIPMENT_ICONS = {
+    // Placeholder art — swap this out whenever your own icons are ready.
+    "Infantry Equipment": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAABACAYAAADS1n9/AAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAP7SURBVHhe7Zs9bNNQEMc7MrLB5rpAP5JnP4dCiQgl1AapYkB8SFAxUESTwsjYBalbx46VWFqmIjGw0bHdGBiYUCfUMWPHiinoajt5OduxnY82tf8/6T8kec9K7+7d3buoY2MAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOaJYlA8MQ677otd8DcgwruOtZltyna8BIwY/tX3qgAXAAbLAiOM6TnXaoIUsMNIgAHIOAmCADLienpVY3R60ctQHuAblBoDILtxWmQQBECUEQM6FAMilbkmzKU2JAMirXtybbL6zJ5ov52/8Wq1q09xemQMB0Clyft3R27L1/bqtLXG7ZQYEQFvlm0an8zvVqDv6xvuqNs5teKE5rzmAEHLHvc+Hy/s8sM/TUOYAj+ZmuNNDVXP03RVHW+S2BCkwjNIGd0Cn5Ee+x8cNAr6+f1H9587uppqjH60saGvLVe0y/44gBiGsbe4AVULIp3yPz7ACIFD/k+uk7ujbtYdamX9XEIFhWPvcAaqEmI3swIcRADH1P7Fqjn5Ys7W3y1XtEv/eQMEwrEPuBFWaVo00YLe+xZ6b2XlemTyIEn3O95AWy1NfV+wJOskBp/ao47qjb+XiKtkLQljH3OmKGnx9UmqO/j3EGS2t2lpkaaFTS6e3but7fF9fyvpVMi10ukOcrmqf70kCOdCrx0EneErasNF1jxo8avT4M/pQNq+SaZFSjoc4vSUh5DdqAik1SykTOYwol8TnZ5Wp5uv717nhXdn6b74nCdTcUZPnpfXgc3tQrq+Sbg0POr4dANZfJRgiU7ZKoXD7qr/HMmXA4J42+b40DKNE5PIqWSyWlrjTVRWLpR/t18l+lHEzhrunMisChiZ1q/9pGUKJyM9VkoY83OmqhLA+Ka8bdLr5M1SopzBN+cffEzXRG9YpG3SJOL1KZjkQ4qaAQty5IoR1pATEz25BIIS16a+VptV8s3AtYNRe638aBlgiGsMK1pGg2xSQroe0hvcJ9L4QpQ9+ILinvrRIwaGue3J3mhvTV1/1Py39lIjMN4cxU8DWSY3LFFzzEbWfNMj6n5aUJWKb788cMVPAXXUtnXLqA0LWtWSa1r/H5ciTf6pRSKkJSkS2U79P9ylgaYOvp1mAN/+nzHHir/XS/9ar+ckvIcZs6wzqf1rCSkTmUz8RNwWkOs/3cPgPRdQ1B5zeqTOt/2mhElGztdi/OxPETQHT/kMGnaQQh3foPOs/YPDunosChO/pBqXNuE47F3X1ohAzBTzh65NCmeC0waJpmhoQI1j/c403so3q6g/5+l7xAwLpf0QpFKQlhLWmDnKEsPb4OpAD6JpHpSHpL38AAAAAAAAAAADo4D/eRtcDDvoT/wAAAABJRU5ErkJggg==",
+  };
+
+  function getEquipmentIconUrl(name) {
+    return EQUIPMENT_ICONS[name] || null;
+  }
+
+  // IC costs — filled in from your own numbers (hoi4-equipment-ic-costs.csv). Tank has no nested
+  // optgroups in real HTML, so its size classes are flattened into their own groups here
+  // (Tank — Light/Medium/Heavy/Super Heavy) instead of nesting under "Tank".
+  var EQUIPMENT_CATALOG = {
+    air: [
+      { group: 'Small Airframe', items: [
+        { name: 'Fighter', cost: 50 },
+        { name: 'Close Air Support', cost: 45 },
+        { name: 'Small Naval Bomber', cost: 40 }
+      ] },
+      { group: 'Medium Airframe', items: [
+        { name: 'Tactical Bomber', cost: 90 },
+        { name: 'Heavy Fighter', cost: 85 },
+        { name: 'Large Naval Bomber', cost: 80 }
+      ] },
+      { group: 'CV Airframe', items: [
+        { name: 'Carrier Fighter', cost: 55 },
+        { name: 'Carrier Dive Bomber', cost: 50 },
+        { name: 'Carrier Torpedo Bomber', cost: 50 }
+      ] },
+      { group: 'Other', items: [
+        { name: 'Strategic Bomber', cost: 175 },
+        { name: 'Scout Planes', cost: 40 }
+      ] }
+    ],
+    ground: [
+      { group: 'Infantry', items: [
+        { name: 'Infantry Equipment', cost: 1.5 },
+        { name: 'SF Equipment', cost: 1.9 },
+        { name: 'Mobile Equipment', cost: 1.7 },
+        { name: 'Support Equipment', cost: 4 },
+        { name: 'Special Equipment', cost: 4 }
+      ] },
+      { group: 'Artillery', items: [
+        { name: 'Artillery', cost: 9 },
+        { name: 'Heavy Artillery', cost: 24 },
+        { name: 'Rocket Artillery', cost: 16 },
+        { name: 'Anti-Tank', cost: 10 },
+        { name: 'Heavy Anti-Tank', cost: 16 },
+        { name: 'Anti-Air', cost: 6.5 },
+        { name: 'Heavy Anti-Air', cost: 16 }
+      ] },
+      { group: 'Mobile', items: [
+        { name: 'Truck', cost: 4 },
+        { name: 'Mechanized', cost: 9 },
+        { name: 'Armoured Car', cost: 8 },
+        { name: 'Train', cost: 75 },
+        { name: 'Railway Gun', cost: 800 }
+      ] },
+      { group: 'Tank — Light', items: [
+        { name: 'Light Tank', cost: 25 },
+        { name: 'Light SPAA', cost: 25 },
+        { name: 'Light SPG', cost: 25 },
+        { name: 'Light TD', cost: 25 },
+        { name: 'Light Flame Tank', cost: 25 }
+      ] },
+      { group: 'Tank — Medium', items: [
+        { name: 'Medium Tank', cost: 35 },
+        { name: 'Medium SPAA', cost: 35 },
+        { name: 'Medium SPG', cost: 35 },
+        { name: 'Medium TD', cost: 35 },
+        { name: 'Medium Flame Tank', cost: 35 }
+      ] },
+      { group: 'Tank — Heavy', items: [
+        { name: 'Heavy Tank', cost: 55 },
+        { name: 'Heavy SPAA', cost: 55 },
+        { name: 'Heavy SPG', cost: 55 },
+        { name: 'Heavy TD', cost: 55 },
+        { name: 'Heavy Flame Tank', cost: 55 }
+      ] },
+      { group: 'Tank — Super Heavy', items: [
+        { name: 'Super Heavy Tank', cost: 70 },
+        { name: 'Landcruiser', cost: 200 }
+      ] }
+    ]
+  };
+
+  function getFirstEquipName(domain) {
+    var groups = EQUIPMENT_CATALOG[domain] || [];
+    if (groups.length && groups[0].items.length) return groups[0].items[0].name;
+    return null;
+  }
+
+  function getEquipDefaultCost(domain, name) {
+    var groups = EQUIPMENT_CATALOG[domain] || [];
+    for (var i = 0; i < groups.length; i++) {
+      for (var j = 0; j < groups[i].items.length; j++) {
+        if (groups[i].items[j].name === name) return groups[i].items[j].cost;
+      }
+    }
+    return null;
+  }
+
+  function equipNameExists(domain, name) {
+    return getEquipDefaultCost(domain, name) !== null;
+  }
+
+  // ---- Screenshot import (OCR) ----
+  // Reads a Division Designer screenshot, finds "Label ... Number" lines, and turns the ones
+  // that look like equipment into a new category. Deliberately conservative: only lines that
+  // match a real catalog entry, or clearly aren't one of the division's other stats, get used.
+
+  // Everything else that shows up as a "Label ... Number" line in a division designer screenshot
+  // (Base Stats / Combat Stats columns, plus the non-equipment rows in Equipment Cost) — skipped
+  // outright so a busy full-window screenshot doesn't flood the new category with junk rows.
+  var OCR_NON_EQUIPMENT_LABELS = [
+    'speed', 'hp', 'organization', 'recovery rate', 'reconnaissance', 'suppression', 'weight',
+    'supply use', 'manpower', 'training time', 'fuel capacity', 'fuel usage',
+    'soft attack', 'hard attack', 'air attack', 'defense', 'armor', 'piercing', 'initiative',
+    'entrenchment', 'reliability bo', 'reliability bonus', 'breakthr', 'breakthrough',
+    'av reliability', 'average reliability', 'trickleback', 'eq capture r', 'equipment capture ratio',
+    'combat width', 'exp loss', 'experience loss', 'max speed', 'maximum speed'
+  ];
+
+  // Cleans OCR text for matching: lowercase, strip anything that isn't a letter/digit/space
+  // (OCR often renders a small UI icon next to a label as stray junk characters — "‘=>",
+  // "(@", curly quotes — usually stuck on the *front* of the real text), collapse whitespace.
+  function ocrNormalize(s) {
+    return String(s).toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
+  }
+
+  function ocrExpandAbbrev(normalized) {
+    return normalized.replace(/\beq$/, 'equipment');
+  }
+
+  function levenshteinDistance(a, b) {
+    var m = a.length, n = b.length;
+    var dp = new Array(n + 1);
+    for (var j = 0; j <= n; j++) dp[j] = j;
+    for (var i = 1; i <= m; i++) {
+      var prevDiag = dp[0];
+      dp[0] = i;
+      for (var k = 1; k <= n; k++) {
+        var temp = dp[k];
+        dp[k] = Math.min(
+          dp[k] + 1,
+          dp[k - 1] + 1,
+          prevDiag + (a.charAt(i - 1) === b.charAt(k - 1) ? 0 : 1)
+        );
+        prevDiag = temp;
+      }
+    }
+    return dp[n];
+  }
+
+  // OCR garbage tends to land at the *front* of a label (a misread icon glyph), with the real
+  // text intact at the end — so this checks the label's own trailing edge against `phrase`,
+  // trying a small window of lengths around the phrase's length and keeping the best score.
+  // Returns the edit distance found (lower is better), or null if nowhere close.
+  function fuzzyTrailingMatch(cleanedLabel, phrase) {
+    if (cleanedLabel === phrase) return 0;
+    // Short phrases ("hp", "armor") are within edit-distance 2 of almost any random trailing
+    // fragment — fuzzy tolerance is only safe once there's enough length for a distance
+    // *ratio* to mean something. Below that, only an exact match counts.
+    if (phrase.length < 8) return null;
+    // Length has to be close in *both* directions. Only checking "not too short" let a whole
+    // extra word slip through as a false match — "Mobile Infantry Eq." normalizes to "mobile
+    // infantry equipment", which has "infantry equipment" as an exact trailing substring, so it
+    // matched plain "Infantry Equipment" even though "Mobile" makes it a different, unrelated
+    // item. Real OCR noise corrupts characters in place; it doesn't add whole extra words.
+    if (cleanedLabel.length < phrase.length - 2) return null;
+    if (cleanedLabel.length > phrase.length + 3) return null;
+    var maxDistance = Math.max(2, Math.round(phrase.length * 0.3));
+    var best = null;
+    for (var extra = -1; extra <= 3; extra++) {
+      var len = phrase.length + extra;
+      if (len < 2 || len > cleanedLabel.length) continue;
+      var slice = cleanedLabel.slice(cleanedLabel.length - len);
+      var d = levenshteinDistance(slice, phrase);
+      if (best === null || d < best) best = d;
+    }
+    return (best !== null && best <= maxDistance) ? best : null;
+  }
+
+  function ocrLabelMatchesAnyPhrase(cleanedLabel, phrases) {
+    for (var i = 0; i < phrases.length; i++) {
+      if (fuzzyTrailingMatch(cleanedLabel, phrases[i]) !== null) return true;
+    }
+    return false;
+  }
+
+  // Searches every domain's catalog for a name matching this OCR'd label. Returns
+  // {name, domain, cost} on a confident match, or null — callers fall back to a Custom row.
+  // Tries an exact match first; if OCR noise breaks that, falls back to a fuzzy trailing-edge
+  // match, preferring the *longest* plausible name (so "Heavy Artillery" wins over the shorter
+  // "Artillery" when a garbled label could fuzzily match either — they share a common suffix).
+  function findCatalogMatchForOcrLabel(rawLabel) {
+    var norm = ocrExpandAbbrev(ocrNormalize(rawLabel));
+    var domains = Object.keys(EQUIPMENT_CATALOG);
+    var allItems = [];
+    for (var d = 0; d < domains.length; d++) {
+      var groups = EQUIPMENT_CATALOG[domains[d]];
+      for (var g = 0; g < groups.length; g++) {
+        for (var i = 0; i < groups[g].items.length; i++) {
+          var item = groups[g].items[i];
+          allItems.push({ name: item.name, domain: domains[d], cost: item.cost, norm: ocrNormalize(item.name) });
+        }
+      }
+    }
+    for (var e = 0; e < allItems.length; e++) {
+      if (allItems[e].norm === norm) {
+        return { name: allItems[e].name, domain: allItems[e].domain, cost: allItems[e].cost };
+      }
+    }
+    // Prefer whichever candidate is the closest edit-distance match — that's the one OCR most
+    // plausibly meant. Only fall back to the longer (more specific) name as a tiebreaker when
+    // two candidates are equally close, so "Heavy Anti-Air" (a good, close match) can't lose to
+    // "Heavy Anti-Tank" (a worse, more distant match) just for being one character longer.
+    var bestMatch = null;
+    var bestDistance = null;
+    for (var f = 0; f < allItems.length; f++) {
+      var dist = fuzzyTrailingMatch(norm, allItems[f].norm);
+      if (dist === null) continue;
+      if (bestMatch === null || dist < bestDistance ||
+          (dist === bestDistance && allItems[f].norm.length > bestMatch.norm.length)) {
+        bestMatch = allItems[f];
+        bestDistance = dist;
+      }
+    }
+    return bestMatch ? { name: bestMatch.name, domain: bestMatch.domain, cost: bestMatch.cost } : null;
+  }
+
+  // Matches "Label .... 1234" or "Label: 1234.5" shaped lines, regardless of whether the
+  // label is one we recognize — used both to parse stat lines and to know a line IS one
+  // (so the name-guesser below doesn't mistake a filtered-out stat for a template name).
+  function matchLabelNumberLine(line) {
+    // The separator before the number is optional (OCR sometimes drops the space entirely —
+    // "Heavy Artillery E45" instead of "Heavy Artillery E. 45"), and a little junk is allowed
+    // after the number (a stray ")", quote, or bracket from a misread icon or border) as long
+    // as the real content clearly ends there.
+    var match = line.match(/^(.+?)[\s:]*(-?\d+(?:[.,]\d+)?)\s*[%)\]"'’”]*$/);
+    if (!match) return null;
+    var label = match[1].trim();
+    var number = parseFloat(match[2].replace(',', '.'));
+    if (label.length < 2 || isNaN(number)) return null;
+    return { label: label, number: number };
+  }
+
+  // A label this long, or with a stray "|" or more than one ":", is a sign OCR merged two or
+  // three side-by-side columns (Base Stats / Combat Stats / Equipment Cost all sitting at the
+  // same height in a full-window screenshot) into one nonsense line — reject it outright rather
+  // than turning it into a junk item with an essentially-random number attached.
+  function looksLikeMergedGarbageLine(label) {
+    // Length alone already caught every real merged-column example seen so far (they all ran
+    // 40+ characters). A leading "|" is NOT a reliable signal on its own — HOI4's small per-line
+    // icons routinely get misread as a stray "|", which was silently deleting completely
+    // legitimate short lines ("Heavy Artillery: 45") more often than it ever caught real garbage.
+    if (label.length > 35) return true;
+    if ((label.match(/:/g) || []).length > 1) return true;
+    return false;
+  }
+
+  // Pulls equipment-looking "Label .... 1234" lines out of raw OCR text, dropping anything
+  // that matches a known non-equipment stat (Manpower, Speed, HP, etc) or looks like garbage.
+  function parseOcrLines(text) {
+    var results = [];
+    text.split('\n').forEach(function (rawLine) {
+      var line = rawLine.trim();
+      if (!line) return;
+      var parsed = matchLabelNumberLine(line);
+      if (!parsed) return;
+      if (looksLikeMergedGarbageLine(parsed.label)) return;
+      if (ocrLabelMatchesAnyPhrase(ocrNormalize(parsed.label), OCR_NON_EQUIPMENT_LABELS)) return;
+      results.push(parsed);
+    });
+    return results;
+  }
+
+  // Language data is embedded inside ocr-lib/worker-shim.js (loaded as workerPath below),
+  // which intercepts the worker's own fetch() for it — see that file for why.
+
+  var tesseractLoadPromise = null;
+  function loadTesseractLibrary() {
+    if (typeof Tesseract !== 'undefined') return Promise.resolve();
+    if (tesseractLoadPromise) return tesseractLoadPromise;
+    tesseractLoadPromise = new Promise(function (resolve, reject) {
+      var script = document.createElement('script');
+      script.src = 'ocr-lib/tesseract.min.js';
+      script.onload = function () { resolve(); };
+      script.onerror = function () { reject(new Error('Could not load ocr-lib/tesseract.min.js — is the ocr-lib folder next to this file?')); };
+      document.head.appendChild(script);
+    });
+    return tesseractLoadPromise;
+  }
+
+  var ocrStatusEl = document.getElementById('ocrStatus');
+  function setOcrStatus(text, isWarn) {
+    ocrStatusEl.textContent = text;
+    ocrStatusEl.classList.toggle('warn', !!isWarn);
+  }
+
+  var OCR_STATUS_LABELS = {
+    'loading tesseract core': 'Loading text-reading engine',
+    'initializing tesseract': 'Starting up',
+    'loading language traineddata': 'Loading English language data',
+    'initializing api': 'Getting ready',
+    'recognizing text': 'Reading the screenshot'
+  };
+
+  var ocrProgressEl = document.getElementById('ocrProgress');
+  function setOcrProgress(fraction) {
+    if (fraction == null) { ocrProgressEl.style.display = 'none'; return; }
+    ocrProgressEl.style.display = 'inline-block';
+    ocrProgressEl.value = Math.round(fraction * 100);
+  }
+
+  // The language-data phase is a single fetch with no incremental progress events from
+  // Tesseract.js — its "progress" just sits at 0 until it's done, which reads as frozen.
+  // Show an indeterminate spinner there instead of a percentage that never seems to move.
+  async function runScreenshotImport(file) {
+    var worker = null;
+    try {
+      setOcrStatus('Loading text-reading library…');
+      setOcrProgress(0);
+      await loadTesseractLibrary();
+
+      worker = await Tesseract.createWorker('eng', 1, {
+        workerPath: 'ocr-lib/worker-shim.js',
+        corePath: 'ocr-lib/tesseract-core-simd-lstm.wasm.js',
+        langPath: 'ocr-lib/',
+        gzip: true,
+        logger: function (msg) {
+          var label = OCR_STATUS_LABELS[msg.status] || msg.status;
+          setOcrStatus(label + '… ' + Math.round((msg.progress || 0) * 100) + '%');
+          setOcrProgress(msg.progress || 0);
+        }
+      });
+      var result = await worker.recognize(file);
+      var text = result.data.text || '';
+      setOcrProgress(null);
+
+      document.getElementById('ocrRawText').textContent = text || '(nothing recognized)';
+      document.getElementById('ocrRawTextBox').style.display = 'block';
+
+      var lines = parseOcrLines(text);
+      var items = [];
+      var matchedDomain = null;
+      var customCount = 0;
+      lines.forEach(function (line) {
+        var match = findCatalogMatchForOcrLabel(line.label);
+        if (match) {
+          if (!matchedDomain) matchedDomain = match.domain;
+          items.push({ name: match.name, qty: line.number, cost: match.cost });
+        } else {
+          customCount++;
+          items.push({ name: line.label, qty: line.number, cost: 1 });
+        }
+      });
+
+      if (!items.length) {
+        setOcrStatus('Couldn’t find anything that looked like equipment in that image.', true);
+        return;
+      }
+
+      var name = 'OCR Read #' + (catCounter + 1);
+      addCategory({
+        name: name, mode: 'ratio', value: 1, type: 'army',
+        domain: matchedDomain || 'ground', items: items
+      });
+      recompute();
+
+      setOcrStatus('Added "' + name + '" with ' + items.length + ' item(s)' +
+        (customCount ? ' (' + customCount + ' as Custom — name not recognized, double-check them)' : '') +
+        '. Check the numbers before relying on it.');
+    } catch (err) {
+      setOcrStatus('Import failed: ' + err.message, true);
+    } finally {
+      setOcrProgress(null);
+      if (worker) { try { await worker.terminate(); } catch (e) {} }
+    }
+  }
+
+  document.getElementById('ocrBtn').addEventListener('click', function () {
+    document.getElementById('ocrFileInput').click();
+  });
+  document.getElementById('ocrFileInput').addEventListener('change', function () {
+    var file = this.files[0];
+    this.value = '';
+    if (file) runScreenshotImport(file);
+  });
+
+  // Ctrl+V anywhere on the page — but only takes over when the clipboard actually holds an
+  // image, so pasting text into a name/number field elsewhere on the page still works normally.
+  document.addEventListener('paste', function (e) {
+    var items = (e.clipboardData && e.clipboardData.items) || [];
+    for (var i = 0; i < items.length; i++) {
+      if (items[i].type && items[i].type.indexOf('image') === 0) {
+        var file = items[i].getAsFile();
+        if (file) {
+          e.preventDefault();
+          runScreenshotImport(file);
+        }
+        return;
+      }
+    }
+  });
+
+  function buildEquipOptionsHtml(domain) {
+    var groups = EQUIPMENT_CATALOG[domain] || [];
+    var html = '';
+    groups.forEach(function (g) {
+      html += '<optgroup label="' + escapeHtml(g.group) + '">';
+      g.items.forEach(function (it) {
+        html += '<option value="' + escapeHtml(it.name) + '">' + escapeHtml(it.name) + '</option>';
+      });
+      html += '</optgroup>';
+    });
+    html += '<option value="custom">Custom&hellip;</option>';
+    return html;
+  }
+
+  // Populates a select with the given domain's catalog, picks currentName if it's in there,
+  // otherwise falls back to "Custom" with currentName preloaded into the free-text field.
+  function populateEquipSelect(selectEl, customEl, hiddenEl, domain, currentName) {
+    selectEl.innerHTML = buildEquipOptionsHtml(domain);
+    if (currentName && equipNameExists(domain, currentName)) {
+      selectEl.value = currentName;
+      customEl.style.display = 'none';
+    } else {
+      selectEl.value = 'custom';
+      customEl.style.display = 'inline-block';
+      customEl.value = currentName || '';
+    }
+    hiddenEl.value = currentName || '';
+  }
+
+  var totalMilsInput = document.getElementById('totalMils');
+  var totalMilsRange = document.getElementById('totalMilsRange');
+  var categoriesEl = document.getElementById('categories');
+
+  totalMilsInput.addEventListener('input', function () {
+    totalMilsRange.value = totalMilsInput.value;
+    recompute();
+  });
+  totalMilsRange.addEventListener('input', function () {
+    totalMilsInput.value = totalMilsRange.value;
+    recompute();
+  });
+
+  // Switching a category's Air/Ground domain re-shuffles every equipment dropdown in it,
+  // so it's locked once there's actually equipment in there to avoid a confusing mid-setup flip.
+  function updateDomainLockState(categoryFieldset) {
+    var hasItems = categoryFieldset.querySelectorAll('.item-row').length > 0;
+    var toggle = categoryFieldset.querySelector('.domain-toggle');
+    categoryFieldset.querySelectorAll('.cat-domain').forEach(function (r) { r.disabled = hasItems; });
+    toggle.classList.toggle('locked', hasItems);
+    toggle.title = hasItems ? 'Remove this category\'s equipment to change Air/Ground.' : '';
+  }
+
+  function updateReorderButtonStates(categoryFieldset) {
+    var rows = categoryFieldset.querySelectorAll('.item-row');
+    rows.forEach(function (row, i) {
+      row.querySelector('.reorder-up').disabled = (i === 0);
+      row.querySelector('.reorder-down').disabled = (i === rows.length - 1);
+    });
+  }
+
+  function updateCategoryReorderButtonStates() {
+    var cats = categoriesEl.querySelectorAll('.category');
+    cats.forEach(function (cat, i) {
+      cat.querySelector('.cat-reorder-stack .reorder-up').disabled = (i === 0);
+      cat.querySelector('.cat-reorder-stack .reorder-down').disabled = (i === cats.length - 1);
+    });
+  }
+
+  function addCategory(prefill) {
+    catCounter++;
+    var id = 'cat' + catCounter;
+    var tpl = document.getElementById('categoryTemplate');
+    var node = tpl.content.firstElementChild.cloneNode(true);
+    node.dataset.id = id;
+    node.querySelectorAll('.alloc-mode').forEach(function (r) { r.name = 'allocMode-' + id; });
+    node.querySelectorAll('.cat-domain').forEach(function (r) { r.name = 'domain-' + id; });
+    categoriesEl.appendChild(node);
+
+    var catDomain = (prefill && prefill.domain) || 'air';
+    node.querySelector('.cat-domain[value="' + catDomain + '"]').checked = true;
+
+    if (prefill) {
+      node.querySelector('.cat-name').value = prefill.name;
+
+      var enabled = prefill.enabled !== undefined ? prefill.enabled : true;
+      node.querySelector('.cat-enabled').checked = enabled;
+      if (!enabled) node.classList.add('cat-disabled');
+
+      var visible = prefill.visible !== undefined ? prefill.visible : true;
+      node.querySelector('.cat-visible').checked = visible;
+
+      var modeToUse = prefill.mode || 'fixed';
+      node.querySelector('.alloc-mode[value="' + modeToUse + '"]').checked = true;
+
+      // Full round-trip fields (used when loading a saved file) — falls back to the
+      // older single-"value" shorthand (used by the built-in example categories below).
+      if (prefill.fixedVal !== undefined) node.querySelector('.alloc-fixed-value').value = prefill.fixedVal;
+      if (prefill.percentVal !== undefined) node.querySelector('.alloc-percent-value').value = prefill.percentVal;
+      if (prefill.ratioVal !== undefined) node.querySelector('.alloc-ratio-value').value = prefill.ratioVal;
+      if (prefill.value !== undefined) {
+        if (modeToUse === 'percent') node.querySelector('.alloc-percent-value').value = prefill.value;
+        else if (modeToUse === 'ratio') node.querySelector('.alloc-ratio-value').value = prefill.value;
+        else node.querySelector('.alloc-fixed-value').value = prefill.value;
+      }
+    }
+
+    var type = (prefill && prefill.type) || 'plane';
+    node.querySelector('.template-type').value = type;
+    var isArmy = type === 'army';
+    node.querySelector('.plane-section').style.display = isArmy ? 'none' : 'block';
+    node.querySelector('.army-section').style.display = isArmy ? 'block' : 'none';
+
+    if (isArmy) {
+      ((prefill && prefill.items) || []).forEach(function (it) { addItem(node, it); });
+    } else {
+      var planeName = (prefill && prefill.planeName) || getFirstEquipName(catDomain) || '';
+      populateEquipSelect(
+        node.querySelector('.plane-equip-select'),
+        node.querySelector('.plane-equip-custom'),
+        node.querySelector('.plane-name'),
+        catDomain, planeName
+      );
+    }
+
+    updateDomainLockState(node);
+    return node;
+  }
+
+  function addItem(categoryFieldset, prefill) {
+    itemCounter++;
+    var tpl = document.getElementById('itemRowTemplate');
+    var row = tpl.content.firstElementChild.cloneNode(true);
+    row.dataset.id = 'item' + itemCounter;
+
+    var domain = categoryFieldset.querySelector('.cat-domain:checked').value;
+    var name = (prefill && prefill.name) || getFirstEquipName(domain) || '';
+    populateEquipSelect(
+      row.querySelector('.item-equip-select'),
+      row.querySelector('.item-equip-custom'),
+      row.querySelector('.item-name'),
+      domain, name
+    );
+
+    if (prefill) {
+      row.querySelector('.item-qty').value = prefill.qty != null ? prefill.qty : 0;
+      row.querySelector('.item-cost').value = prefill.cost != null ? prefill.cost : 1;
+      row.querySelector('.item-boost').value = prefill.boost != null ? prefill.boost : 0;
+    } else {
+      // Brand-new row: default IC comes from the catalog pick, quantity is left blank on purpose.
+      var defCost = getEquipDefaultCost(domain, name);
+      row.querySelector('.item-cost').value = defCost != null ? defCost : 1;
+      row.querySelector('.item-qty').value = 0;
+    }
+
+    categoryFieldset.querySelector('.item-rows').appendChild(row);
+    updateDomainLockState(categoryFieldset);
+    updateReorderButtonStates(categoryFieldset);
+    recompute();
+  }
+
+  document.addEventListener('click', function (e) {
+    if (e.target.id === 'addCategoryBtn') {
+      addCategory(null);
+      updateCategoryReorderButtonStates();
+      recompute();
+    } else if (e.target.classList.contains('remove-cat-btn')) {
+      e.target.closest('.category').remove();
+      updateCategoryReorderButtonStates();
+      recompute();
+    } else if (e.target.classList.contains('add-item-btn')) {
+      addItem(e.target.closest('.category'), null);
+    } else if (e.target.classList.contains('remove-item-btn')) {
+      var removedFromCat = e.target.closest('.category');
+      e.target.closest('.item-row').remove();
+      updateDomainLockState(removedFromCat);
+      updateReorderButtonStates(removedFromCat);
+      recompute();
+    } else if (e.target.classList.contains('reorder-up') || e.target.classList.contains('reorder-down')) {
+      var goingUp = e.target.classList.contains('reorder-up');
+      var itemRow = e.target.closest('.item-row');
+      var card = e.target.closest('.mil-card');
+      if (itemRow) {
+        var itemCat = e.target.closest('.category');
+        var itemSibling = goingUp ? itemRow.previousElementSibling : itemRow.nextElementSibling;
+        if (itemSibling) itemRow.parentNode.insertBefore(goingUp ? itemRow : itemSibling, goingUp ? itemSibling : itemRow);
+        updateReorderButtonStates(itemCat);
+        recompute();
+      } else if (card) {
+        var name = card.getAttribute('data-name');
+        var idx = panelOrder.indexOf(name);
+        var swapWith = goingUp ? idx - 1 : idx + 1;
+        if (idx !== -1 && swapWith >= 0 && swapWith < panelOrder.length) {
+          panelOrder[idx] = panelOrder[swapWith];
+          panelOrder[swapWith] = name;
+          recompute();
+        }
+      } else {
+        var catFs = e.target.closest('.category');
+        if (catFs) {
+          var catSibling = goingUp ? catFs.previousElementSibling : catFs.nextElementSibling;
+          if (catSibling) catFs.parentNode.insertBefore(goingUp ? catFs : catSibling, goingUp ? catSibling : catFs);
+          updateCategoryReorderButtonStates();
+          recompute();
+        }
+      }
+    }
+  });
+
+  // Native drag-and-drop for reordering — equipment rows within a category's table,
+  // and production-preview cards in the panel (which reorders via the panelOrder array
+  // rather than moving DOM nodes directly, since the panel is fully rebuilt each recompute()).
+  var draggedItemRow = null;
+  var draggedCardName = null;
+  var draggedCategory = null;
+  document.addEventListener('dragstart', function (e) {
+    var row = e.target.closest('.item-row');
+    var card = !row && e.target.closest('.mil-card');
+    var catFs = !row && !card && e.target.closest('.category');
+    if (row) {
+      draggedItemRow = row;
+      row.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+    } else if (card) {
+      draggedCardName = card.getAttribute('data-name');
+      card.classList.add('card-dragging');
+      e.dataTransfer.effectAllowed = 'move';
+    } else if (catFs) {
+      draggedCategory = catFs;
+      catFs.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+    }
+  });
+  document.addEventListener('dragover', function (e) {
+    if (draggedItemRow) {
+      var row = e.target.closest('.item-row');
+      if (!row || row === draggedItemRow || row.parentNode !== draggedItemRow.parentNode) return;
+      e.preventDefault();
+      var rect = row.getBoundingClientRect();
+      var before = (e.clientY - rect.top) < rect.height / 2;
+      row.classList.toggle('drag-over-top', before);
+      row.classList.toggle('drag-over-bottom', !before);
+    } else if (draggedCardName) {
+      var card = e.target.closest('.mil-card');
+      if (!card || card.getAttribute('data-name') === draggedCardName) return;
+      e.preventDefault();
+      var cardRect = card.getBoundingClientRect();
+      var cardBefore = (e.clientY - cardRect.top) < cardRect.height / 2;
+      card.classList.toggle('card-drag-over-top', cardBefore);
+      card.classList.toggle('card-drag-over-bottom', !cardBefore);
+    } else if (draggedCategory) {
+      var catFs = e.target.closest('.category');
+      if (!catFs || catFs === draggedCategory) return;
+      e.preventDefault();
+      var catRect = catFs.getBoundingClientRect();
+      var catBefore = (e.clientY - catRect.top) < catRect.height / 2;
+      catFs.classList.toggle('drag-over-top', catBefore);
+      catFs.classList.toggle('drag-over-bottom', !catBefore);
+    }
+  });
+  document.addEventListener('dragleave', function (e) {
+    var row = e.target.closest('.item-row');
+    if (row) row.classList.remove('drag-over-top', 'drag-over-bottom');
+    var card = e.target.closest('.mil-card');
+    if (card) card.classList.remove('card-drag-over-top', 'card-drag-over-bottom');
+    var catFs = e.target.closest('.category');
+    if (catFs) catFs.classList.remove('drag-over-top', 'drag-over-bottom');
+  });
+  document.addEventListener('drop', function (e) {
+    if (draggedItemRow) {
+      var row = e.target.closest('.item-row');
+      if (!row || row === draggedItemRow || row.parentNode !== draggedItemRow.parentNode) return;
+      e.preventDefault();
+      var before = row.classList.contains('drag-over-top');
+      row.classList.remove('drag-over-top', 'drag-over-bottom');
+      row.parentNode.insertBefore(draggedItemRow, before ? row : row.nextSibling);
+      updateReorderButtonStates(row.closest('.category'));
+      recompute();
+    } else if (draggedCardName) {
+      var card = e.target.closest('.mil-card');
+      if (!card || card.getAttribute('data-name') === draggedCardName) return;
+      e.preventDefault();
+      var cardBefore = card.classList.contains('card-drag-over-top');
+      card.classList.remove('card-drag-over-top', 'card-drag-over-bottom');
+      var targetName = card.getAttribute('data-name');
+      var fromIdx = panelOrder.indexOf(draggedCardName);
+      if (fromIdx !== -1) panelOrder.splice(fromIdx, 1);
+      var toIdx = panelOrder.indexOf(targetName);
+      panelOrder.splice(cardBefore ? toIdx : toIdx + 1, 0, draggedCardName);
+      recompute();
+    } else if (draggedCategory) {
+      var catFs = e.target.closest('.category');
+      if (!catFs || catFs === draggedCategory) return;
+      e.preventDefault();
+      var catBefore = catFs.classList.contains('drag-over-top');
+      catFs.classList.remove('drag-over-top', 'drag-over-bottom');
+      catFs.parentNode.insertBefore(draggedCategory, catBefore ? catFs : catFs.nextSibling);
+      updateCategoryReorderButtonStates();
+      recompute();
+    }
+  });
+  document.addEventListener('dragend', function () {
+    if (draggedItemRow) draggedItemRow.classList.remove('dragging');
+    if (draggedCategory) draggedCategory.classList.remove('dragging');
+    document.querySelectorAll('.item-row').forEach(function (r) { r.classList.remove('drag-over-top', 'drag-over-bottom'); });
+    document.querySelectorAll('.mil-card').forEach(function (c) { c.classList.remove('card-dragging', 'card-drag-over-top', 'card-drag-over-bottom'); });
+    document.querySelectorAll('.category').forEach(function (c) { c.classList.remove('drag-over-top', 'drag-over-bottom'); });
+    draggedItemRow = null;
+    draggedCardName = null;
+    draggedCategory = null;
+  });
+
+  document.addEventListener('change', function (e) {
+    if (e.target.classList.contains('template-type')) {
+      var fieldset = e.target.closest('.category');
+      var isArmy = e.target.value === 'army';
+      fieldset.querySelector('.plane-section').style.display = isArmy ? 'none' : 'block';
+      fieldset.querySelector('.army-section').style.display = isArmy ? 'block' : 'none';
+      if (!isArmy) {
+        // Switching into Simple equipment — the dropdown may never have been populated
+        // if this category started life as Multiple equipment ratio. Fill it now.
+        var domainForPlane = fieldset.querySelector('.cat-domain:checked').value;
+        var existingPlaneName = fieldset.querySelector('.plane-name').value || getFirstEquipName(domainForPlane) || '';
+        populateEquipSelect(
+          fieldset.querySelector('.plane-equip-select'),
+          fieldset.querySelector('.plane-equip-custom'),
+          fieldset.querySelector('.plane-name'),
+          domainForPlane, existingPlaneName
+        );
+      } else {
+        // Switching into Multiple equipment ratio — the single-equipment field is unused
+        // while in this mode, so keep it clear rather than carrying stale data into a save file.
+        fieldset.querySelector('.plane-name').value = '';
+      }
+    } else if (e.target.classList.contains('cat-enabled')) {
+      var catFieldset = e.target.closest('.category');
+      catFieldset.classList.toggle('cat-disabled', !e.target.checked);
+    } else if (e.target.classList.contains('cat-domain')) {
+      var domainCat = e.target.closest('.category');
+      var newDomain = e.target.value;
+      var planeSelect = domainCat.querySelector('.plane-equip-select');
+      if (planeSelect) {
+        populateEquipSelect(planeSelect, domainCat.querySelector('.plane-equip-custom'),
+          domainCat.querySelector('.plane-name'), newDomain, domainCat.querySelector('.plane-name').value);
+      }
+      domainCat.querySelectorAll('.item-row').forEach(function (row) {
+        var hiddenName = row.querySelector('.item-name');
+        populateEquipSelect(row.querySelector('.item-equip-select'), row.querySelector('.item-equip-custom'),
+          hiddenName, newDomain, hiddenName.value);
+      });
+    } else if (e.target.classList.contains('plane-equip-select')) {
+      var planeFieldset = e.target.closest('.category');
+      var planeCustom = planeFieldset.querySelector('.plane-equip-custom');
+      var planeHidden = planeFieldset.querySelector('.plane-name');
+      if (e.target.value === 'custom') {
+        planeCustom.style.display = 'inline-block';
+        planeCustom.value = '';
+        planeHidden.value = '';
+        planeCustom.focus();
+      } else {
+        planeCustom.style.display = 'none';
+        planeHidden.value = e.target.value;
+      }
+    } else if (e.target.classList.contains('item-equip-select')) {
+      var itemRow = e.target.closest('.item-row');
+      var itemCat = e.target.closest('.category');
+      var itemDomain = itemCat.querySelector('.cat-domain:checked').value;
+      var itemCustom = itemRow.querySelector('.item-equip-custom');
+      var itemHidden = itemRow.querySelector('.item-name');
+      if (e.target.value === 'custom') {
+        itemCustom.style.display = 'inline-block';
+        itemCustom.value = '';
+        itemHidden.value = '';
+        itemCustom.focus();
+      } else {
+        itemCustom.style.display = 'none';
+        itemHidden.value = e.target.value;
+        var defCost = getEquipDefaultCost(itemDomain, e.target.value);
+        if (defCost != null) itemRow.querySelector('.item-cost').value = defCost;
+      }
+    }
+    recompute();
+  });
+
+  document.addEventListener('input', function (e) {
+    if (e.target === totalMilsInput || e.target === totalMilsRange) return;
+    if (e.target.classList.contains('plane-equip-custom')) {
+      e.target.closest('.category').querySelector('.plane-name').value = e.target.value;
+    } else if (e.target.classList.contains('item-equip-custom')) {
+      e.target.closest('.item-row').querySelector('.item-name').value = e.target.value;
+    }
+    recompute();
+  });
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+
+  function renderMilCard(priorityNum, name, milsValue, isFirst, isLast) {
+    var rounded = Math.ceil(milsValue);
+    var iconUrl = getEquipmentIconUrl(name);
+    var iconStyle = iconUrl
+      ? ' style="background-image:url(&quot;' + iconUrl + '&quot;); background-size:contain; background-repeat:no-repeat; background-position:center;"'
+      : '';
+
+    // The grid is always a fixed 3x5 = 15 slots. Up to 15 mils, each lit box = 1 mil.
+    // Past 15, x5 mode kicks in (each box = 5 mils, grid covers up to 75).
+    // Past 75, x10 mode kicks in (each box = 10 mils, grid covers up to 150).
+    // Past 150 we stop trying to scale further and just show the grid maxed out.
+    var mode = null;
+    var unitsPerBox = 1;
+    if (rounded > 75) { mode = 'x10'; unitsPerBox = 10; }
+    else if (rounded > 15) { mode = 'x5'; unitsPerBox = 5; }
+
+    var litBoxes = rounded <= 15 ? rounded : Math.ceil(rounded / unitsPerBox);
+    litBoxes = Math.max(0, Math.min(15, litBoxes));
+
+    var boxesHtml = '';
+    for (var i = 0; i < 15; i++) {
+      var isLit = i < litBoxes;
+      boxesHtml += '<span class="mil-unit' + (isLit ? ' lit' : '') + '">' + (isLit && mode ? mode : '') + '</span>';
+    }
+
+    return (
+      '<div class="mil-card" draggable="true" data-name="' + escapeHtml(name || '') + '">' +
+        '<span class="mil-card-headerbg"></span>' +
+        '<span class="mil-card-reorder">' +
+          '<button type="button" class="reorder-btn reorder-up" title="Move up"' + (isFirst ? ' disabled' : '') + '>&#9650;</button>' +
+          '<button type="button" class="reorder-btn reorder-down" title="Move down"' + (isLast ? ' disabled' : '') + '>&#9660;</button>' +
+        '</span>' +
+        '<div class="mil-card-top-left">' +
+          '<span class="mil-card-badge">' + priorityNum + '</span>' +
+          '<span class="mil-card-name">' + escapeHtml(name || '(unnamed)') + '</span>' +
+        '</div>' +
+        '<span class="mil-card-count">' + rounded + '</span>' +
+        '<span class="mil-card-icon"' + iconStyle + '></span>' +
+        '<span class="mil-mult-stack">' +
+          '<span class="mil-mult-badge' + (mode === 'x10' ? ' hot' : '') + '">x10</span>' +
+          '<span class="mil-mult-badge' + (mode === 'x5' ? ' hot' : '') + '">x5</span>' +
+        '</span>' +
+        '<span class="mil-card-grid">' + boxesHtml + '</span>' +
+      '</div>'
+    );
+  }
+
+  function recompute() {
+    // While applyState() is rebuilding categories one at a time, skip recalculating —
+    // a recompute() against a half-built page would filter panelOrder against an
+    // incomplete equipment list and permanently drop names that haven't been re-added yet.
+    if (isApplyingState) return;
+    var totalMils = parseFloat(totalMilsInput.value) || 0;
+    var categories = Array.prototype.slice.call(document.querySelectorAll('.category'));
+
+    // Disabled categories are skipped entirely — no mils, no cards, and they don't
+    // eat into any of the pools below. This is what makes flipping a category off
+    // "just work" for ratio mode: the remaining ratio categories re-normalize on their own.
+    var sumFixed = 0;
+    var catData = [];
+    categories.forEach(function (fs) {
+      var enabled = fs.querySelector('.cat-enabled').checked;
+      if (!enabled) {
+        fs.querySelector('.cat-mils-result').textContent = '0.00 (off)';
+        return;
+      }
+      var mode = fs.querySelector('.alloc-mode:checked').value;
+      var fixedVal = parseFloat(fs.querySelector('.alloc-fixed-value').value) || 0;
+      var percentVal = parseFloat(fs.querySelector('.alloc-percent-value').value) || 0;
+      var ratioVal = parseFloat(fs.querySelector('.alloc-ratio-value').value) || 0;
+      if (mode === 'fixed') sumFixed += fixedVal;
+      catData.push({ fs: fs, mode: mode, fixedVal: fixedVal, percentVal: percentVal, ratioVal: ratioVal });
+    });
+
+    // Tier 1: fixed categories skim an absolute amount off the top.
+    var leftoverAfterFixedRaw = totalMils - sumFixed;
+    var leftoverAfterFixed = Math.max(0, leftoverAfterFixedRaw);
+
+    // Tier 2: percent categories each claim an absolute % of what fixed left behind.
+    var sumPercent = catData.filter(function (c) { return c.mode === 'percent'; })
+                             .reduce(function (s, c) { return s + c.percentVal; }, 0);
+    var percentAllocatedTotal = leftoverAfterFixed * (sumPercent / 100);
+    var leftoverAfterPercentRaw = leftoverAfterFixed - percentAllocatedTotal;
+    var leftoverAfterPercent = Math.max(0, leftoverAfterPercentRaw);
+
+    // Tier 3: ratio categories always split whatever's left completely, in proportion
+    // to their weights — turning one off just changes the sum they're normalized against.
+    var ratioCats = catData.filter(function (c) { return c.mode === 'ratio'; });
+    var sumRatio = ratioCats.reduce(function (s, c) { return s + c.ratioVal; }, 0);
+
+    var totalAssigned = 0;
+    // Same-named equipment always combines into one card in the panel, even across categories —
+    // this map tracks the running total per name, mergedOrder keeps first-seen order stable.
+    var mergedMils = {};
+    var mergedOrder = [];
+    function addToMerged(name, amount) {
+      if (!(name in mergedMils)) { mergedMils[name] = 0; mergedOrder.push(name); }
+      mergedMils[name] += amount;
+    }
+
+    catData.forEach(function (c) {
+      var mils;
+      if (c.mode === 'fixed') {
+        mils = c.fixedVal;
+      } else if (c.mode === 'percent') {
+        mils = leftoverAfterFixed * (c.percentVal / 100);
+      } else {
+        mils = sumRatio > 0 ? leftoverAfterPercent * (c.ratioVal / sumRatio)
+                             : (ratioCats.length ? leftoverAfterPercent / ratioCats.length : 0);
+      }
+      totalAssigned += mils;
+      c.fs.querySelector('.cat-mils-result').textContent = mils.toFixed(2);
+
+      var visible = c.fs.querySelector('.cat-visible').checked;
+      var type = c.fs.querySelector('.template-type').value;
+
+      if (type === 'army') {
+        var rows = Array.prototype.slice.call(c.fs.querySelectorAll('.item-row'));
+        var weights = rows.map(function (r) {
+          var qty = parseFloat(r.querySelector('.item-qty').value) || 0;
+          var cost = parseFloat(r.querySelector('.item-cost').value) || 0;
+          var boost = parseFloat(r.querySelector('.item-boost').value) || 0;
+          var boostMult = Math.max(0, 1 + boost / 100);
+          return qty * cost * boostMult;
+        });
+        var sumW = weights.reduce(function (a, b) { return a + b; }, 0);
+        rows.forEach(function (r, i) {
+          var share = sumW > 0 ? weights[i] / sumW : (rows.length ? 1 / rows.length : 0);
+          var itemMils = mils * share;
+          r.querySelector('.item-share-result').textContent = (share * 100).toFixed(1) + '%';
+          if (visible) addToMerged(r.querySelector('.item-name').value, itemMils);
+        });
+      } else {
+        if (visible) addToMerged(c.fs.querySelector('.plane-name').value, mils);
+      }
+    });
+
+    // The panel's display order is a manually-reorderable list, independent of category/item
+    // order. Keep any names still present, in their saved order; drop names that vanished;
+    // append newly-appeared names at the end in their natural encounter order.
+    var finalOrder = panelOrder.filter(function (name) { return name in mergedMils; });
+    mergedOrder.forEach(function (name) { if (finalOrder.indexOf(name) === -1) finalOrder.push(name); });
+    panelOrder = finalOrder;
+
+    var sidePanelHtml = '';
+    finalOrder.forEach(function (name, i) {
+      sidePanelHtml += renderMilCard(i + 1, name, mergedMils[name], i === 0, i === finalOrder.length - 1);
+    });
+
+    document.getElementById('sidePanelContent').innerHTML = sidePanelHtml;
+
+    var overFixed = leftoverAfterFixedRaw < 0;
+    var overPercent = leftoverAfterPercentRaw < 0;
+    var unallocated = Math.max(0, totalMils - totalAssigned);
+
+    var ratioLine = ratioCats.length
+      ? 'Ratio categories split: <strong>' + leftoverAfterPercent.toFixed(2) + '</strong> mils across ' + ratioCats.length + ' active (weights sum to ' + sumRatio.toFixed(2) + ')<br>'
+      : '';
+
+    var summaryEl = document.getElementById('summary');
+    summaryEl.innerHTML =
+      'Total mils: <strong>' + totalMils + '</strong><br>' +
+      'Fixed mils used: <strong>' + sumFixed.toFixed(2) + '</strong>' +
+        (overFixed ? ' <span class="warn">&mdash; exceeds total by ' + (-leftoverAfterFixedRaw).toFixed(2) + '!</span>' : '') + '<br>' +
+      'Left after fixed: <strong>' + leftoverAfterFixed.toFixed(2) + '</strong><br>' +
+      'Percent categories claim: <strong>' + sumPercent.toFixed(1) + '%</strong> of that' +
+        (overPercent ? ' <span class="warn">&mdash; over 100%, allocations below exceed what is available!</span>' : '') + '<br>' +
+      'Left after percent: <strong>' + leftoverAfterPercent.toFixed(2) + '</strong><br>' +
+      ratioLine +
+      'Total mils assigned: <strong>' + totalAssigned.toFixed(2) + '</strong> / ' + totalMils +
+        (unallocated > 0.005 ? ' <span class="warn">(' + unallocated.toFixed(2) + ' mils unassigned)</span>' : '');
+  }
+
+  function getState() {
+    return {
+      totalMils: parseFloat(totalMilsInput.value) || 0,
+      panelOrder: panelOrder.slice(),
+      categories: Array.prototype.slice.call(document.querySelectorAll('.category')).map(function (fs) {
+        return {
+          name: fs.querySelector('.cat-name').value,
+          enabled: fs.querySelector('.cat-enabled').checked,
+          domain: fs.querySelector('.cat-domain:checked').value,
+          visible: fs.querySelector('.cat-visible').checked,
+          mode: fs.querySelector('.alloc-mode:checked').value,
+          fixedVal: parseFloat(fs.querySelector('.alloc-fixed-value').value) || 0,
+          percentVal: parseFloat(fs.querySelector('.alloc-percent-value').value) || 0,
+          ratioVal: parseFloat(fs.querySelector('.alloc-ratio-value').value) || 0,
+          type: fs.querySelector('.template-type').value,
+          planeName: fs.querySelector('.plane-name').value,
+          items: Array.prototype.slice.call(fs.querySelectorAll('.item-row')).map(function (r) {
+            return {
+              name: r.querySelector('.item-name').value,
+              qty: parseFloat(r.querySelector('.item-qty').value) || 0,
+              cost: parseFloat(r.querySelector('.item-cost').value) || 0,
+              boost: parseFloat(r.querySelector('.item-boost').value) || 0
+            };
+          })
+        };
+      })
+    };
+  }
+
+  function applyState(state) {
+    isApplyingState = true;
+    categoriesEl.innerHTML = '';
+    var mils = state && state.totalMils != null ? state.totalMils : 60;
+    totalMilsInput.value = mils;
+    totalMilsRange.value = mils;
+    panelOrder = (state && state.panelOrder) ? state.panelOrder.slice() : [];
+    (state && state.categories || []).forEach(function (cat) { addCategory(cat); });
+    isApplyingState = false;
+    updateCategoryReorderButtonStates();
+    recompute();
+  }
+
+  var saveStatusEl = document.getElementById('saveStatus');
+  function setSaveStatus(text) { saveStatusEl.textContent = text; }
+
+  document.getElementById('saveBtn').addEventListener('click', function () {
+    var data = JSON.stringify(getState(), null, 2);
+    var blob = new Blob([data], { type: 'application/json' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = 'hoi4-mil-save.json';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    setSaveStatus('Downloaded hoi4-mil-save.json — move it into your project folder if it isn\'t there already.');
+  });
+
+  var loadFileInput = document.getElementById('loadFileInput');
+  document.getElementById('loadBtn').addEventListener('click', function () {
+    loadFileInput.click();
+  });
+  loadFileInput.addEventListener('change', function () {
+    var file = loadFileInput.files[0];
+    if (!file) return;
+    var reader = new FileReader();
+    reader.onload = function () {
+      try {
+        applyState(JSON.parse(reader.result));
+        setSaveStatus('Loaded ' + file.name + '.');
+      } catch (err) {
+        setSaveStatus('Could not read that file — is it a save from this page?');
+      }
+      loadFileInput.value = '';
+    };
+    reader.onerror = function () {
+      setSaveStatus('Could not read that file.');
+      loadFileInput.value = '';
+    };
+    reader.readAsText(file);
+  });
+
+  // Example categories so the layout makes sense on first load — edit or remove freely.
+  addCategory({ name: 'Air Force', mode: 'fixed', value: 10, type: 'plane', domain: 'air', planeName: 'Fighter' });
+  addCategory({
+    name: 'Infantry Template', mode: 'percent', value: 100, type: 'army', domain: 'ground',
+    items: [
+      { name: 'Infantry Equipment', qty: 24, cost: 1.5 },
+      { name: 'Support Equipment', qty: 4, cost: 4 },
+      { name: 'Artillery', qty: 12, cost: 9 }
+    ]
+  });
+
+  updateCategoryReorderButtonStates();
+  recompute();
+})();
+</script>
+
+</body>
+</html>

@@ -1,0 +1,207 @@
+{
+  "totalMils": 150,
+  "categories": [
+    {
+      "name": "Railway gun",
+      "enabled": true,
+      "domain": "ground",
+      "mode": "fixed",
+      "fixedVal": 5,
+      "percentVal": 50,
+      "ratioVal": 1,
+      "type": "plane",
+      "planeName": "Railway Gun",
+      "items": []
+    },
+    {
+      "name": "Air force",
+      "enabled": true,
+      "domain": "air",
+      "mode": "percent",
+      "fixedVal": 10,
+      "percentVal": 30,
+      "ratioVal": 1,
+      "type": "army",
+      "planeName": "",
+      "items": [
+        {
+          "name": "Fighter",
+          "qty": 500,
+          "cost": 50,
+          "boost": 0
+        },
+        {
+          "name": "Close Air Support",
+          "qty": 100,
+          "cost": 45,
+          "boost": 0
+        },
+        {
+          "name": "Large Naval Bomber",
+          "qty": 50,
+          "cost": 80,
+          "boost": 0
+        }
+      ]
+    },
+    {
+      "name": "Line Infantry",
+      "enabled": true,
+      "domain": "ground",
+      "mode": "ratio",
+      "fixedVal": 10,
+      "percentVal": 50,
+      "ratioVal": 3,
+      "type": "army",
+      "planeName": "",
+      "items": [
+        {
+          "name": "Anti-Tank",
+          "qty": 330,
+          "cost": 10,
+          "boost": 0
+        },
+        {
+          "name": "Artillery",
+          "qty": 150,
+          "cost": 9,
+          "boost": 0
+        },
+        {
+          "name": "Heavy Anti-Air",
+          "qty": 45,
+          "cost": 16,
+          "boost": 0
+        },
+        {
+          "name": "Infantry Equipment",
+          "qty": 1110,
+          "cost": 2.3,
+          "boost": 0
+        },
+        {
+          "name": "Truck",
+          "qty": 80,
+          "cost": 4,
+          "boost": 0
+        },
+        {
+          "name": "Support Equipment",
+          "qty": 150,
+          "cost": 4,
+          "boost": 0
+        }
+      ]
+    },
+    {
+      "name": "Tank division",
+      "enabled": true,
+      "domain": "ground",
+      "mode": "fixed",
+      "fixedVal": 10,
+      "percentVal": 50,
+      "ratioVal": 2,
+      "type": "army",
+      "planeName": "",
+      "items": [
+        {
+          "name": "Heavy Anti-Air",
+          "qty": 75,
+          "cost": 16,
+          "boost": 0
+        },
+        {
+          "name": "Infantry Equipment",
+          "qty": 30,
+          "cost": 2.3,
+          "boost": 0
+        },
+        {
+          "name": "Mobile Equipment",
+          "qty": 600,
+          "cost": 2.5,
+          "boost": 0
+        },
+        {
+          "name": "Mechanized",
+          "qty": 300,
+          "cost": 9,
+          "boost": 0
+        },
+        {
+          "name": "Truck",
+          "qty": 80,
+          "cost": 4,
+          "boost": 0
+        },
+        {
+          "name": "Support Equipment",
+          "qty": 150,
+          "cost": 4,
+          "boost": 0
+        },
+        {
+          "name": "Light Tank",
+          "qty": 20,
+          "cost": 25,
+          "boost": 0
+        },
+        {
+          "name": "Medium Tank",
+          "qty": 360,
+          "cost": 45,
+          "boost": 0
+        }
+      ]
+    },
+    {
+      "name": "Special forces",
+      "enabled": true,
+      "domain": "ground",
+      "mode": "ratio",
+      "fixedVal": 10,
+      "percentVal": 50,
+      "ratioVal": 1,
+      "type": "army",
+      "planeName": "",
+      "items": [
+        {
+          "name": "Rocket Artillery",
+          "qty": 360,
+          "cost": 16,
+          "boost": 0
+        },
+        {
+          "name": "Infantry Equipment",
+          "qty": 110,
+          "cost": 2.3,
+          "boost": 0
+        },
+        {
+          "name": "SF Equipment",
+          "qty": 1100,
+          "cost": 2.8,
+          "boost": 0
+        },
+        {
+          "name": "Truck",
+          "qty": 80,
+          "cost": 4,
+          "boost": 0
+        },
+        {
+          "name": "Special Equipment",
+          "qty": 600,
+          "cost": 4,
+          "boost": 0
+        },
+        {
+          "name": "Support Equipment",
+          "qty": 150,
+          "cost": 4,
+          "boost": 0
+        }
+      ]
+    }
+  ]
+}
