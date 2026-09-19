@@ -1123,6 +1123,13 @@ function renderArmyEvents(events) {
     } else if (e.kind === "template_removed") {
       badge = `<span class="badge rem">DELETED</span>`;
       text = `${escapeXML(e.name)} (had ${e.count} divisions)`;
+    } else if (e.kind === "template_renamed") {
+      badge = `<span class="badge dec">RENAMED</span>`;
+      text = `${escapeXML(e.from)} &rarr; ${escapeXML(e.to)}`;
+    } else if (e.kind === "template_edited") {
+      const parts = [formatComposition(e.combat), formatComposition(e.regimentalSupport), formatComposition(e.support)].filter(Boolean);
+      badge = `<span class="badge dec">EDITED</span>`;
+      text = `${escapeXML(e.name)} redesigned — now ${escapeXML(parts.join(" · "))}`;
     } else {
       const delta = e.to - e.from;
       badge = delta > 0 ? `<span class="badge add">+${delta}</span>` : `<span class="badge rem">${delta}</span>`;
@@ -1828,6 +1835,16 @@ function dateSortKey(dateStr) {
 	return y * 1e6 + mo * 1e4 + d * 1e2 + h;
 }
 
+// A stable string fingerprint of a division template's actual composition (its regiments,
+// regimental support, and support company slots), sorted so it doesn't matter what ORDER
+// the save happens to list them in — only whether the composition itself changed (a player
+// redesigning a template's layout, not just renaming it or gaining/losing divisions built
+// from it).
+function compositionSignature(tpl) {
+	const norm = (arr) => (arr || []).map((x) => `${x.type}:${x.count}`).sort().join(",");
+	return `combat[${norm(tpl.combat)}]|regsupport[${norm(tpl.regimentalSupport)}]|support[${norm(tpl.support)}]`;
+}
+
 function buildCountryTimeline(saves, tag) {
 	// saves: array of parseSave() results, already sorted ascending by dateSortKey.
 	const focusEvents = []; // { date, id, kind: 'completed' | 'in_progress' }
@@ -1998,7 +2015,10 @@ function buildCountryTimeline(saves, tag) {
 		}
 
 		if (c.armyTemplates) {
-			const currentCounts = new Map(c.armyTemplates.map((tpl) => [tpl.id, { name: tpl.name, count: tpl.count }]));
+			const currentCounts = new Map(c.armyTemplates.map((tpl) => [
+				tpl.id,
+				{ name: tpl.name, count: tpl.count, combat: tpl.combat, regimentalSupport: tpl.regimentalSupport, support: tpl.support, compSig: compositionSignature(tpl) },
+			]));
 			if (!prevArmyCounts) {
 				for (const [id, tpl] of currentCounts) {
 					if (tpl.count > 0) {
@@ -2014,8 +2034,36 @@ function buildCountryTimeline(saves, tag) {
 							armyEvents.push({ date, kind: "new_template", templateId: id, name: tpl.name, count: tpl.count });
 							everActiveTemplateIds.add(id);
 						}
-					} else if (prev.count !== tpl.count) {
-						armyEvents.push({ date, kind: "count_changed", templateId: id, name: tpl.name, from: prev.count, to: tpl.count });
+					} else {
+						// The player can rename an existing template in the designer — the id
+						// stays the same, only the name changes. Without tracking this
+						// separately, a rename that also happens to change the division count
+						// (a common combo — renaming usually comes with redesigning it) would
+						// only ever show up as a "count_changed" event labeled with the NEW
+						// name, silently burying any link back to the old one; the old name
+						// would then look like it just vanished with no explanation.
+						if (prev.name !== tpl.name) {
+							armyEvents.push({ date, kind: "template_renamed", templateId: id, from: prev.name, to: tpl.name, count: tpl.count });
+						}
+						if (prev.count !== tpl.count) {
+							armyEvents.push({ date, kind: "count_changed", templateId: id, name: tpl.name, from: prev.count, to: tpl.count });
+						}
+						// A player can also redesign a template's actual layout (add/remove
+						// regiments, swap support companies, etc.) without renaming it or
+						// changing how many divisions currently use it — that's a real,
+						// notable edit to what the template even IS, so it needs its own
+						// event distinct from the name/count ones above.
+						if (prev.compSig !== tpl.compSig) {
+							armyEvents.push({
+								date,
+								kind: "template_edited",
+								templateId: id,
+								name: tpl.name,
+								combat: tpl.combat,
+								regimentalSupport: tpl.regimentalSupport,
+								support: tpl.support,
+							});
+						}
 						if (tpl.count > 0) everActiveTemplateIds.add(id);
 					}
 				}

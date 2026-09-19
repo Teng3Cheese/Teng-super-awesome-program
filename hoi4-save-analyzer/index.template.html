@@ -1123,6 +1123,13 @@ function renderArmyEvents(events) {
     } else if (e.kind === "template_removed") {
       badge = `<span class="badge rem">DELETED</span>`;
       text = `${escapeXML(e.name)} (had ${e.count} divisions)`;
+    } else if (e.kind === "template_renamed") {
+      badge = `<span class="badge dec">RENAMED</span>`;
+      text = `${escapeXML(e.from)} &rarr; ${escapeXML(e.to)}`;
+    } else if (e.kind === "template_edited") {
+      const parts = [formatComposition(e.combat), formatComposition(e.regimentalSupport), formatComposition(e.support)].filter(Boolean);
+      badge = `<span class="badge dec">EDITED</span>`;
+      text = `${escapeXML(e.name)} redesigned — now ${escapeXML(parts.join(" · "))}`;
     } else {
       const delta = e.to - e.from;
       badge = delta > 0 ? `<span class="badge add">+${delta}</span>` : `<span class="badge rem">${delta}</span>`;
