@@ -12,6 +12,7 @@
 //   - CHARACTER_NAMES: character-names.json (from extract-character-names.js)
 //   - TECH_YEARS: tech-years.json (from extract-tech-years.js)
 //   - EQUIPMENT_CATEGORIES: equipment-categories.json (from extract-equipment-categories.js)
+//   - TECH_CATEGORIES: tech-categories.json (from extract-tech-categories.js)
 //
 // Edit index.template.html (not index.html directly — it gets overwritten here) for any
 // HTML/CSS/JS changes, then run: node build.js
@@ -29,6 +30,8 @@ const lawIdeas = fs.readFileSync("law-ideas.json", "utf8");
 const characterNames = fs.readFileSync("character-names.json", "utf8");
 const techYears = fs.readFileSync("tech-years.json", "utf8");
 const equipmentCategories = fs.readFileSync("equipment-categories.json", "utf8");
+const techCategories = fs.readFileSync("tech-categories.json", "utf8");
+const countryColors = fs.readFileSync("country-colors.json", "utf8");
 
 // Using a replacer FUNCTION (not a plain string) for every substitution below: the file
 // contents being spliced in (JS source, JSON data) can legitimately contain "$"-sequences
@@ -46,6 +49,8 @@ inline("/*__LAW_IDEAS__*/", lawIdeas);
 inline("/*__CHARACTER_NAMES__*/", characterNames);
 inline("/*__TECH_YEARS__*/", techYears);
 inline("/*__EQUIPMENT_CATEGORIES__*/", equipmentCategories);
+inline("/*__TECH_CATEGORIES__*/", techCategories);
+inline("/*__COUNTRY_COLORS__*/", countryColors);
 
 fs.writeFileSync("index.html", html);
 console.log("Wrote index.html, size:", fs.statSync("index.html").size);

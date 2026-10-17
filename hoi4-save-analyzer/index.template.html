@@ -179,7 +179,7 @@
 <script>
 const TAGS = [
   ["ENG","United Kingdom"], ["FRA","France"], ["USA","United States"], ["GER","Germany"],
-  ["ITA","Italy"], ["JAP","Japan"],
+  ["ITA","Italy"], ["JAP","Japan"], ["SOV","Soviet Union"],
   ["CAN","Canada"], ["SAF","South Africa"], ["RAJ","Raj"], ["AST","Australia"],
   ["UKR","Ukraine"], ["MAN","Manchuria"], ["HUN","Hungary"], ["ROM","Romania"],
   ["BUL","Bulgaria"], ["SPR","Spain"],
@@ -482,6 +482,346 @@ function completionRankHue(rank, maxRank) {
   return 250 - ratio * 250; // full rainbow sweep: 250 blue-violet -> 180 cyan -> 120 green -> 60 yellow -> 0 red (earliest -> latest)
 }
 
+// The focus map is pure SVG (no HTML mixed in via foreignObject — just <rect>/<text>/<path>),
+// which makes a standalone PNG export straightforward with only built-in Canvas APIs: no
+// library, no CDN, stays true to the single-file/offline design. Exports at the diagram's
+// own native size (not the scrolled viewport), so the PNG captures the WHOLE tree in one
+// image even for a country with a huge one.
+// Scales the EXPORTED image up relative to the on-screen diagram — the source is SVG
+// (vector), so drawing it onto a larger canvas target re-rasterizes it crisply at that
+// larger size rather than blurrily stretching a fixed-resolution bitmap. On-screen size is
+// unaffected since this only touches the canvas/export step, not the SVG's own dimensions.
+const FOCUS_MAP_EXPORT_SCALE = 1.5;
+
+// Shared by every PNG export (focus map alone, or the full country poster): rasterizes a
+// standalone SVG markup string onto a canvas at the given target size and triggers a
+// download. Pulled out so the poster export (which stitches several sections plus the
+// focus tree into ONE combined SVG) can reuse exactly this pipeline rather than duplicating it.
+function svgMarkupToPNG(svgMarkup, width, height, filename) {
+  // A standalone SVG (parsed outside this document, via an <img>/Canvas) needs its own xmlns
+  // declared explicitly — the live in-page <svg> works without it only because the browser
+  // already knows it's SVG from the surrounding HTML context.
+  if (!/xmlns=/.test(svgMarkup)) svgMarkup = svgMarkup.replace("<svg ", '<svg xmlns="http://www.w3.org/2000/svg" ');
+  const svgBlob = new Blob([svgMarkup], { type: "image/svg+xml;charset=utf-8" });
+  const svgUrl = URL.createObjectURL(svgBlob);
+
+  const img = new Image();
+  img.onload = () => {
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    // Fill the background explicitly rather than relying on the SVG's own `style="background"`
+    // — that's unreliable once the SVG is rendered standalone as an image rather than inline
+    // in the page, so without this the exported PNG could come out with a transparent backing.
+    ctx.fillStyle = "#14171c";
+    ctx.fillRect(0, 0, width, height);
+    ctx.drawImage(img, 0, 0, width, height);
+    URL.revokeObjectURL(svgUrl);
+
+    canvas.toBlob((pngBlob) => {
+      const pngUrl = URL.createObjectURL(pngBlob);
+      const a = document.createElement("a");
+      a.href = pngUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(pngUrl);
+    }, "image/png");
+  };
+  img.src = svgUrl;
+}
+
+function exportFocusMapPNG(tag) {
+  const svgEl = document.getElementById("focusMapSvg");
+  if (!svgEl) return;
+  const width = Number(svgEl.getAttribute("width")) * FOCUS_MAP_EXPORT_SCALE;
+  const height = Number(svgEl.getAttribute("height")) * FOCUS_MAP_EXPORT_SCALE;
+  svgMarkupToPNG(svgEl.outerHTML, width, height, `hoi4_focus_map_${tag}.png`);
+}
+
+// Hardcoded per the mod's own (simplified) war structure — three shared entry dates instead
+// of sixteen individual historical ones, normalized to the 1st of the month. Spain has no
+// real historical entry (stayed neutral) but is grouped with Danzig per the mod's own
+// bucketing; Italy gets its own real historical date since it isn't in any of the 3 groups.
+const WAR_ENTRY_DATES = {
+  ENG: "1939.9.1.1", FRA: "1939.9.1.1", CAN: "1939.9.1.1", SAF: "1939.9.1.1", RAJ: "1939.9.1.1", AST: "1939.9.1.1",
+  GER: "1939.9.1.1", HUN: "1939.9.1.1", ROM: "1939.9.1.1", BUL: "1939.9.1.1", SPR: "1939.9.1.1",
+  UKR: "1941.6.1.1", SOV: "1941.6.1.1",
+  JAP: "1941.12.1.1", MAN: "1941.12.1.1", USA: "1941.12.1.1",
+  ITA: "1940.6.1.1",
+};
+
+function svgText(x, y, text, opts) {
+  opts = opts || {};
+  const size = opts.size || 12;
+  const color = opts.color || "#e6e9ef";
+  const weight = opts.weight || 400;
+  const anchor = opts.anchor || "start";
+  return `<text x="${x}" y="${y}" font-size="${size}" fill="${color}" font-weight="${weight}" text-anchor="${anchor}">${escapeXML(text)}</text>`;
+}
+
+// Chronological list of actual PP spends: laws adopted + advisors appointed. Law REMOVALS
+// are deliberately skipped — a law getting replaced by a new one is implied by the new one
+// showing up, not a separate line item — but an advisor leaving a slot isn't shown either
+// here since the poster is about what was BOUGHT, not departures; the slot being filled
+// again later still shows as its own purchase. National spirits (non-law ppEvents) aren't
+// PP purchases, so they're excluded too.
+function buildPPBuyOrder(t) {
+  const items = [];
+  for (const e of t.ppEvents) {
+    if (e.kind !== "idea_adopted") continue;
+    const info = resolveIdeaLabel(e.label);
+    if (!info.isLaw) continue;
+    items.push({ date: e.date, label: info.name });
+  }
+  for (const e of t.advisorEvents) {
+    if (e.kind === "appointed" || e.kind === "appointed_before_tracking") {
+      items.push({ date: e.date, label: `Advisor: ${advisorDisplayName(e.characterId)}` });
+    }
+  }
+  items.sort((a, b) => HOI4Parser.dateSortKey(a.date) - HOI4Parser.dateSortKey(b.date));
+  return items;
+}
+
+// Which tech CATEGORIES this country most consistently researches ahead of schedule — same
+// "ahead" threshold the Research panel itself uses, just tallied by category instead of
+// listed per-tech, e.g. "Research focused: Tank Chassis, Anti Air" rather than raw tech ids.
+function buildResearchFocusSummary(t) {
+  const counts = new Map();
+  for (const tech of t.researchTimeline) {
+    const diff = techYearDiff(tech.id, tech.date);
+    if (diff == null || diff < 0.45) continue;
+    const category = resolveTechCategory(tech.id);
+    if (!category) continue;
+    counts.set(category, (counts.get(category) || 0) + 1);
+  }
+  return [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6).map(([category]) => category);
+}
+
+// "The amount of civs they build before stopping" — most countries grow civilian factories
+// up to some point, then pivot to building mils instead. The earlier version of this just
+// reported the highest civ count seen across the batch, labeled as "capped" — which is wrong
+// whenever the batch simply ends while civ count is STILL rising: that's not a plateau, it's
+// "we ran out of data mid-growth", and reporting it as a cap is a false claim. This instead
+// finds the LAST snapshot where civ count actually increased; if that's also the final loaded
+// snapshot, civs are still growing as of the data we have — only when later snapshots exist
+// and show no further growth is it a genuine, confirmed plateau.
+//
+// Only looks at saves up to Pearl Harbor — a country's factory count (see parseStateFactories
+// in parser.js) is based on which states it currently CONTROLS, not which it originally
+// built, so once the whole war is in full swing, territory capture/loss can swing the number
+// by dozens in a single month (verified directly: England's real data jumps +26 then +47 in
+// consecutive months in mid-1942 — construction alone cannot do that). That's not "they built
+// more civs", it's conquest, and would corrupt the "how many did they deliberately build"
+// signal this is trying to measure. Cutting off there keeps the measurement to the period
+// where a factory-count change still reliably means construction.
+const CIV_CAP_CUTOFF_DATE = "1941.12.1.1"; // Pearl Harbor
+function buildCivFactoryPlateau(t) {
+  const cutoffKey = HOI4Parser.dateSortKey(CIV_CAP_CUTOFF_DATE);
+  const snaps = (t.productionSnapshots || []).filter((s) => s.factories && HOI4Parser.dateSortKey(s.date) <= cutoffKey);
+  if (snaps.length < 2) return null;
+  let lastIncreaseIdx = 0;
+  for (let i = 1; i < snaps.length; i++) {
+    if (snaps[i].factories.civ > snaps[lastIncreaseIdx].factories.civ) lastIncreaseIdx = i;
+  }
+  return {
+    civ: snaps[lastIncreaseIdx].factories.civ,
+    date: snaps[lastIncreaseIdx].date,
+    stillGrowing: lastIncreaseIdx === snaps.length - 1,
+  };
+}
+
+// The division-template roster as of the save closest to (at or after) a hardcoded war-entry
+// benchmark date — "what did the army actually look like when the war started" rather than
+// just stating the benchmark date in isolation. Falls back to the latest available save if
+// the benchmark date is beyond every loaded save (no data that far yet).
+function findArmyTemplatesNearDate(tag, targetDate) {
+  const targetKey = HOI4Parser.dateSortKey(targetDate);
+  const withTag = loadedSaves.filter((s) => s.countries && s.countries[tag]).sort((a, b) => a.dateSortKey - b.dateSortKey);
+  if (!withTag.length) return null;
+  const chosen = withTag.find((s) => s.dateSortKey >= targetKey) || withTag[withTag.length - 1];
+  return { date: chosen.date, templates: chosen.countries[tag].armyTemplates || [] };
+}
+
+// Rough word-wrap for SVG text (which has no native wrapping) — estimates character width
+// from font size rather than measuring real glyphs, good enough for this font at these sizes.
+function wrapSvgText(text, maxWidth, fontSize) {
+  const maxChars = Math.max(12, Math.floor(maxWidth / (fontSize * 0.56)));
+  const words = text.split(" ");
+  const lines = [];
+  let current = "";
+  for (const word of words) {
+    const test = current ? `${current} ${word}` : word;
+    if (test.length > maxChars && current) { lines.push(current); current = word; }
+    else current = test;
+  }
+  if (current) lines.push(current);
+  return lines;
+}
+
+function svgCardBg(x, y, w, h) {
+  return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="10" fill="#1b1f27" stroke="#2e3543" stroke-width="1.5"/>`;
+}
+
+// Renders one "card" (title + a list of lines, each optionally wrapped) and reports the
+// height it actually used, so the caller can lay out a grid of cards with uneven content
+// without overlapping or leaving awkward gaps.
+function buildCardSVG(x, y, w, title, lines) {
+  const PADDING = 20, TITLE_H = 34, LINE_H = 24;
+  const wrapped = [];
+  for (const line of lines) {
+    const size = line.size || 15;
+    for (const sub of wrapSvgText(line.text, w - PADDING * 2, size)) {
+      wrapped.push({ text: sub, size, color: line.color });
+    }
+  }
+  const bodyLines = wrapped.length || 1;
+  const h = PADDING * 2 + TITLE_H + bodyLines * LINE_H;
+  let svg = svgCardBg(x, y, w, h);
+  svg += svgText(x + PADDING, y + PADDING + 20, title, { size: 19, weight: 700, color: "#5fb0ff" });
+  let ly = y + PADDING + TITLE_H + 16;
+  if (!wrapped.length) {
+    svg += svgText(x + PADDING, ly, "No data", { size: 14, color: "#9098ab" });
+  } else {
+    for (const line of wrapped) {
+      svg += svgText(x + PADDING, ly, line.text, { size: line.size, color: line.color || "#e6e9ef" });
+      ly += LINE_H;
+    }
+  }
+  return { svg, height: h };
+}
+
+// Stitches several sections (header, PP buy order, research focus, army composition, civ
+// cap) plus the EXISTING focus-tree SVG content into one tall combined SVG, then reuses the
+// exact same svgMarkupToPNG pipeline as the standalone focus-tree export.
+// Formats one army template as a {title, composition} pair for a card: name+count as the
+// bold line, full combat/support breakdown as a wrapped sub-line underneath — reused for
+// both the current roster and the war-entry snapshot so they read identically.
+function formatTemplateCardLines(tpl) {
+  const comp = [formatComposition(tpl.combat), formatComposition(tpl.regimentalSupport), formatComposition(tpl.support)].filter(Boolean).join(" · ");
+  return [
+    { text: `${tpl.name} — ${tpl.count} divisions`, size: 15 },
+    { text: comp || "No composition data", size: 13, color: "#9098ab" },
+  ];
+}
+
+function exportCountryPosterPNG(tag) {
+  const t = timelines.countries[tag];
+  const focusMapSvg = document.getElementById("focusMapSvg");
+  if (!t || !focusMapSvg) return;
+
+  const treeWidth = Number(focusMapSvg.getAttribute("width"));
+  const treeHeight = Number(focusMapSvg.getAttribute("height"));
+  const treeInner = focusMapSvg.innerHTML;
+
+  const GRID_WIDTH = 1760; // fixed content width for the stat-card grid — independent of the
+  // focus tree's own width, which can run into the thousands of pixels; stretching cards to
+  // match that would just leave them mostly-empty, not more useful.
+  const WIDTH = Math.max(GRID_WIDTH + 48, treeWidth);
+  const PAD = 24;
+  const players = getPlayersForTag(tag);
+  const colorRgb = (window.COUNTRY_COLORS || {})[tag];
+  const accent = colorRgb ? `rgb(${colorRgb.r},${colorRgb.g},${colorRgb.b})` : "#5fb0ff";
+
+  // The REAL-WORLD date this batch was actually played, from each .hoi4 file's own OS
+  // timestamp (see fileLastModified) — not the in-game calendar date, and not a day-count.
+  const realMs = loadedSaves.map((s) => s.fileLastModified).filter((ms) => typeof ms === "number");
+  const realPlayedLabel = realMs.length
+    ? (Math.min(...realMs) === Math.max(...realMs) ? fmtRealDate(Math.min(...realMs)) : `${fmtRealDate(Math.min(...realMs))} to ${fmtRealDate(Math.max(...realMs))}`)
+    : null;
+
+  const saves = timelines.saves;
+  const firstDate = saves[0] && saves[0].date, lastDate = saves[saves.length - 1] && saves[saves.length - 1].date;
+
+  const parts = [];
+
+  // Header band
+  const headerHeight = 130;
+  parts.push(`<rect x="0" y="0" width="${WIDTH}" height="${headerHeight}" fill="#1b1f27"/>`);
+  parts.push(`<rect x="0" y="0" width="12" height="${headerHeight}" fill="${accent}"/>`);
+  parts.push(svgText(PAD + 14, 48, TAG_NAMES[tag] || tag, { size: 38, weight: 700, color: accent }));
+  parts.push(svgText(PAD + 14, 76, players.length ? `Played by ${players.join(", ")}` : "No player data", { size: 17, color: "#9098ab" }));
+  if (firstDate && lastDate) {
+    parts.push(svgText(PAD + 14, 100, `In-game: ${fmtDate(firstDate)} — ${fmtDate(lastDate)}`, { size: 15, color: "#9098ab" }));
+  }
+  if (realPlayedLabel) {
+    parts.push(svgText(PAD + 14, 122, `Played on: ${realPlayedLabel}`, { size: 15, color: "#9098ab" }));
+  }
+  const warDate = WAR_ENTRY_DATES[tag];
+  if (warDate) {
+    parts.push(svgText(WIDTH - PAD, 48, "Historical war entry", { size: 14, color: "#9098ab", anchor: "end" }));
+    parts.push(svgText(WIDTH - PAD, 76, fmtDate(warDate), { size: 20, weight: 700, color: accent, anchor: "end" }));
+  }
+
+  // 2x2 card grid: PP buys + current army on row 1, war-entry army + research/industry on
+  // row 2 — each card sized to its own content, each row's height set by its taller card, so
+  // uneven content (a long PP buy list vs. a short research summary) never overlaps or
+  // leaves an awkwardly empty card.
+  const colW = (GRID_WIDTH - PAD) / 2;
+  const col1X = PAD, col2X = PAD * 2 + colW;
+  let gridY = headerHeight + PAD;
+
+  const ppBuys = buildPPBuyOrder(t);
+  const PP_ROW_LIMIT = 20;
+  const ppLines = ppBuys.slice(0, PP_ROW_LIMIT).map((item) => ({ text: `${fmtDate(item.date)} — ${item.label}`, size: 14 }));
+  if (ppBuys.length > PP_ROW_LIMIT) ppLines.push({ text: `+${ppBuys.length - PP_ROW_LIMIT} more`, size: 12, color: "#9098ab" });
+  const ppCard = buildCardSVG(col1X, gridY, colW, "Political Power Purchases", ppLines);
+
+  const activeTemplates = (t.currentArmyTemplates || []).filter((tpl) => tpl.count > 0).sort((a, b) => b.count - a.count).slice(0, 6);
+  const armyLines = activeTemplates.flatMap(formatTemplateCardLines);
+  const armyCard = buildCardSVG(col2X, gridY, colW, "Army Composition (current)", armyLines);
+
+  parts.push(ppCard.svg, armyCard.svg);
+  gridY += Math.max(ppCard.height, armyCard.height) + PAD;
+
+  const warSnapshot = warDate ? findArmyTemplatesNearDate(tag, warDate) : null;
+  const warLines = [];
+  if (warSnapshot) {
+    if (HOI4Parser.dateSortKey(warSnapshot.date) !== HOI4Parser.dateSortKey(warDate)) {
+      warLines.push({ text: `Closest available save: ${fmtDate(warSnapshot.date)}`, size: 12, color: "#9098ab" });
+    }
+    const warActive = warSnapshot.templates.filter((tpl) => tpl.count > 0).sort((a, b) => b.count - a.count).slice(0, 6);
+    if (!warActive.length) warLines.push({ text: "No active division templates at this point", size: 14, color: "#9098ab" });
+    warLines.push(...warActive.flatMap(formatTemplateCardLines));
+  } else {
+    warLines.push({ text: "No data available", size: 14, color: "#9098ab" });
+  }
+  const warCard = buildCardSVG(col1X, gridY, colW, "Army at War Entry", warLines);
+
+  const researchFocus = buildResearchFocusSummary(t);
+  const civPlateau = buildCivFactoryPlateau(t);
+  const riLines = [{
+    text: researchFocus.length ? `Research focused: ${researchFocus.join(", ")}` : "No standout research focus detected",
+    size: 14, color: researchFocus.length ? "#e6e9ef" : "#9098ab",
+  }];
+  if (civPlateau) {
+    riLines.push({
+      text: civPlateau.stillGrowing
+        ? `Civilian factories still growing — ${civPlateau.civ} as of ${fmtDate(civPlateau.date)}`
+        : `Civilian factories capped at ${civPlateau.civ} (reached ${fmtDate(civPlateau.date)})`,
+      size: 14,
+    });
+  }
+  const riCard = buildCardSVG(col2X, gridY, colW, "Research & Industry", riLines);
+
+  parts.push(warCard.svg, riCard.svg);
+  gridY += Math.max(warCard.height, riCard.height) + PAD;
+
+  // Focus tree, offset below everything else
+  const treeY = gridY;
+  parts.push(`<g transform="translate(0, ${treeY})">${treeInner}</g>`);
+  const totalHeight = treeY + treeHeight + PAD;
+
+  const svgMarkup = `<svg xmlns="http://www.w3.org/2000/svg" width="${WIDTH}" height="${totalHeight}" viewBox="0 0 ${WIDTH} ${totalHeight}">` +
+    `<rect x="0" y="0" width="${WIDTH}" height="${totalHeight}" fill="#14171c"/>` +
+    parts.join("") +
+    `</svg>`;
+
+  svgMarkupToPNG(svgMarkup, WIDTH * FOCUS_MAP_EXPORT_SCALE, totalHeight * FOCUS_MAP_EXPORT_SCALE, `hoi4_poster_${tag}.png`);
+}
+
 function renderFocusMapPanel(t, tag) {
   const eras = t.focusTreeEras || [];
   // Some countries switch their active focus tree mid-game (e.g. France: french_focus
@@ -570,9 +910,12 @@ function renderFocusMapPanel(t, tag) {
     </g>`;
   }
 
-  const svg = `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" style="background:#14171c">${edges}${nodes}</svg>`;
+  const svg = `<svg id="focusMapSvg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" style="background:#14171c">${edges}${nodes}</svg>`;
 
-  return `<h2>National Focus Map</h2>
+  return `<h2>National Focus Map
+    <button class="btn" style="float:right; font-size:11px; padding:3px 9px; margin-left:6px;" onclick="exportFocusMapPNG('${tag}')">Export Tree PNG</button>
+    <button class="btn" style="float:right; font-size:11px; padding:3px 9px;" onclick="exportCountryPosterPNG('${tag}')">Export Full Poster</button>
+  </h2>
     ${eraPicker}
     <div class="sub">${focuses.length} focuses (disabled branches already removed) · ${completed.size} completed${current ? ` · currently: ${escapeXML(byId.get(current.id)?.name || prettifyToken(current.id))}` : ""} · completed focuses run a full rainbow by the order they were actually taken: <span style="color:hsl(250,60%,60%)">blue-violet</span> <span style="color:hsl(210,60%,60%)">blue</span> <span style="color:hsl(180,60%,55%)">cyan</span> <span style="color:hsl(120,55%,50%)">green</span> <span style="color:hsl(60,60%,55%)">yellow</span> <span style="color:hsl(0,65%,60%)">red</span> (1st → last), <span style="color:#ffd699">amber</span> = in progress, not-yet-taken focuses stay grey · hover a box for details</div>
     <div style="overflow:auto; max-height:520px; border:1px solid var(--border); border-radius:6px;">${svg}</div>`;
@@ -899,11 +1242,12 @@ function techYearDiff(techId, dateStr) {
 
 // A year or more ahead is a big deal; even a several-month lead is worth a glance, so this
 // shows down to about half a year of lead — just filtering out pure noise below that.
-// Being LATE is only notable within a tight window: a huge modded tech tree makes "got to it
-// eventually, way later" the norm rather than the exception, so flagging every overdue tech
-// would just be noise — but slipping by just a few months (say researching a tech in January
-// that was nominally due the previous October) still says something about how close a
-// country was to keeping pace, so that narrow case is worth surfacing too.
+// A tech landing AFTER its nominal year is only notable within a bounded window: normal
+// research pace already lands a tech ~250 days after its nominal year even when nothing's
+// wrong, and a huge modded tech tree makes "got to it eventually, way later" the norm rather
+// than the exception — so flagging every such tech would just be noise. Showing it only up
+// to 8 months after keeps this to the more notable end. Deliberately phrased as "after", not
+// "late"/"behind" — those imply underperformance, when this is often just normal pace.
 function techYearDiffLabel(diff) {
   if (diff == null) return "";
   if (diff >= 0.45) {
@@ -914,25 +1258,39 @@ function techYearDiffLabel(diff) {
     const text = diff < 2 ? `${Math.round(diff * 12)}mo ahead` : `${Math.round(diff)}y ahead`;
     return ` <span style="color:${color}">(${text})</span>`;
   }
-  if (diff < 0 && diff >= -0.25) {
-    const monthsLate = Math.round(-diff * 12);
-    if (monthsLate < 1) return "";
-    return ` <span style="color:var(--accent)">(${monthsLate}mo late)</span>`;
+  if (diff < 0 && diff >= -8 / 12) {
+    const monthsAfter = Math.round(-diff * 12);
+    if (monthsAfter < 1) return "";
+    return ` <span style="color:var(--accent)">(${monthsAfter}mo after)</span>`;
   }
   return "";
+}
+
+// TECH_CATEGORIES is built from two signals (see extract-tech-categories.js): the exact
+// equipment archetype a tech unlocks, reusing EQUIPMENT_CATEGORIES (precise — "Tank Chassis",
+// "Anti Air"), or its tech-tree folder as a coarser fallback for doctrine/industry techs with
+// no equipment of their own ("Industry", "Electronics").
+function resolveTechCategory(id) {
+  const meta = (window.TECH_CATEGORIES || {})[id];
+  return meta ? meta.category : null;
+}
+
+function techLabelWithCategory(id) {
+  const category = resolveTechCategory(id);
+  return category ? `<span style="color:var(--muted); font-size:11px;">[${escapeXML(category)}]</span> ${escapeXML(id)}` : escapeXML(id);
 }
 
 function renderResearchPanel(t) {
   let html = `<h2>Research</h2>`;
   const lastSnap = t.researchSnapshots[t.researchSnapshots.length - 1];
   if (lastSnap && lastSnap.inProgress.length) {
-    html += `<div class="sub">Currently researching (as of ${fmtDate(lastSnap.date)}): ${lastSnap.inProgress.map(x=>x.id).join(", ")}</div>`;
+    html += `<div class="sub">Currently researching (as of ${fmtDate(lastSnap.date)}): ${lastSnap.inProgress.map(x=>techLabelWithCategory(x.id)).join(", ")}</div>`;
   }
   html += `<div class="scroll">`;
   if (!t.researchTimeline.length) html += `<div class="empty">No research data found.</div>`;
   for (const tech of t.researchTimeline) {
     const diff = techYearDiff(tech.id, tech.date);
-    html += `<div class="focusItem"><div class="date">${fmtDate(tech.date)}</div><div class="name">${tech.id}${techYearDiffLabel(diff)}</div></div>`;
+    html += `<div class="focusItem"><div class="date">${fmtDate(tech.date)}</div><div class="name">${techLabelWithCategory(tech.id)}${techYearDiffLabel(diff)}</div></div>`;
   }
   html += `</div>`;
   return html;
@@ -1220,6 +1578,8 @@ el("cacheInput").onchange = (e) => { if (e.target.files[0]) loadCache(e.target.f
 <script>window.CHARACTER_NAMES = /*__CHARACTER_NAMES__*/;</script>
 <script>window.TECH_YEARS = /*__TECH_YEARS__*/;</script>
 <script>window.EQUIPMENT_CATEGORIES = /*__EQUIPMENT_CATEGORIES__*/;</script>
+<script>window.TECH_CATEGORIES = /*__TECH_CATEGORIES__*/;</script>
+<script>window.COUNTRY_COLORS = /*__COUNTRY_COLORS__*/;</script>
 <script>/*__PARSER_SOURCE__*/</script>
 <script>/*__TIMELINE_BUILDER_SOURCE__*/</script>
 </body>

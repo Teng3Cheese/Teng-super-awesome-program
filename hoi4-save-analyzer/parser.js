@@ -8,7 +8,7 @@
 
 const TARGET_TAGS = [
 	// Majors
-	"ENG", "FRA", "USA", "GER", "ITA", "JAP",
+	"ENG", "FRA", "USA", "GER", "ITA", "JAP", "SOV",
 	// Others (hardcoded, fixed list — never derived from major=yes or otherwise dynamic)
 	"CAN", "SAF", "RAJ", "AST", "UKR", "MAN", "HUN", "ROM", "BUL", "SPR",
 ];
