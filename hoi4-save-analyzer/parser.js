@@ -13,7 +13,7 @@ const TARGET_TAGS = [
 	"CAN", "SAF", "RAJ", "AST", "UKR", "MAN", "HUN", "ROM", "BUL", "SPR",
 ];
 
-const COUNTRY_FIELD_KEYS = new Set(["focus", "politics", "technology", "production", "decision_status", "characters", "focus_tree", "units"]);
+const COUNTRY_FIELD_KEYS = new Set(["focus", "politics", "technology", "production", "decision_status", "characters", "focus_tree", "units", "deployment", "intelligence_agency"]);
 const PRODUCTION_LINE_KEYS = new Set(["military_lines", "naval_lines", "ship_refit_lines", "general_lines"]);
 
 function isWhitespace(ch) {
@@ -60,6 +60,37 @@ function skipValue(text, i) {
 	return i;
 }
 
+// Splits a body that's a flat sequence of anonymous `{...}` `{...}` ... entries (an array of
+// objects with no key of their own) into each entry's own raw inner text, preserving object
+// boundaries — unlike walkAndCapture, which (see its own comment below) FLATTENS anonymous
+// entries into one shared token stream, losing which field belonged to which object. That's
+// fine when every entry has the exact same fields in the same order (appointed_advisors), but
+// wrong the moment entries vary in shape — e.g. a country's unit_modifiers array mixes dozens
+// of differently-shaped modifier objects (from doctrines, laws, techs, traits, ...), where
+// only SOME entries even have an `id=` field; flattening there would pair up `type=`/`id=`
+// values that never belonged to the same object. Use this instead whenever entries aren't
+// guaranteed uniform.
+function splitAnonymousBlocks(text) {
+	const blocks = [];
+	const n = text.length;
+	let i = 0;
+	while (i < n) {
+		while (i < n && isWhitespace(text[i])) i++;
+		if (i >= n) break;
+		if (text[i] === "{") {
+			const start = i + 1;
+			const end = skipValue(text, i);
+			blocks.push(text.slice(start, Math.max(start, end - 1)));
+			i = end;
+		} else {
+			// Not an anonymous block at this position — malformed for this helper's assumed
+			// shape; skip defensively rather than looping forever.
+			i++;
+		}
+	}
+	return blocks;
+}
+
 // Walks a flat sequence of `key=value` / `key={...}` / `key="..."` pairs at the top level
 // of `text`. For every key where shouldCapture(key) is true, records the value as a string
 // (a `{...}` value's inner text, or a quoted/bare scalar with quotes stripped), pushed onto
@@ -67,7 +98,8 @@ function skipValue(text, i) {
 // key — e.g. an array of objects) has its own opening/closing braces skipped one character
 // at a time, which flattens its inner key=value pairs into this same top-level walk; that's
 // intentional and relied on by appointed_advisors (array of {slot, character} objects) —
-// see extractAppointedAdvisors, which zips the resulting parallel arrays back together.
+// see extractAppointedAdvisors, which zips the resulting parallel arrays back together. For
+// anonymous entries that AREN'T uniform in shape, use splitAnonymousBlocks instead.
 // Everything not captured is skipped without allocation. Returns a Map<key, string[]>.
 function walkAndCapture(text, shouldCapture) {
 	const out = new Map();
@@ -314,6 +346,206 @@ function parseAppointedAdvisors(charactersBody) {
 	return out;
 }
 
+// deployment={ ... unit_modifiers={ {category_army={...} type=grand_doctrine number=0
+// id=new_mobile_warfare} {type=sub_doctrine number=0 id=infantry_doctrine_1} ... } ... } —
+// unit_modifiers is nested inside the country's `deployment` block, not top-level (confirmed
+// by walking its raw brace context directly — COUNTRY_FIELD_KEYS alone won't reach it, since
+// walkAndCapture only looks at the top level, not inside unrelated keys it didn't capture).
+// It's an array of anonymous modifier objects from every source (doctrines, laws, techs,
+// traits, ...), NOT uniform in shape (most don't even have an `id=` field), so this must use
+// splitAnonymousBlocks (preserves each entry's own body) rather than walkAndCapture's
+// flattening (which would pair up type/id values from entirely different objects — verified
+// directly: 162 `type=` entries but only 19 `id=` entries in a real save, so a naive
+// parallel-array zip is simply wrong here).
+function parseDoctrines(deploymentBody) {
+	if (!deploymentBody) return { grand: [], sub: [] };
+	const outer = walkAndCapture(deploymentBody, (k) => k === "unit_modifiers");
+	const unitModifiersBody = (outer.get("unit_modifiers") || [])[0];
+	if (!unitModifiersBody) return { grand: [], sub: [] };
+	const grand = [];
+	const sub = [];
+	for (const block of splitAnonymousBlocks(unitModifiersBody)) {
+		const typeMatch = /(?:^|\n)\s*type=(\w+)/.exec(block);
+		if (!typeMatch) continue;
+		const idMatch = /(?:^|\n)\s*id=(\w+)/.exec(block);
+		if (!idMatch) continue;
+		if (typeMatch[1] === "grand_doctrine") grand.push(idMatch[1]);
+		else if (typeMatch[1] === "sub_doctrine") sub.push(idMatch[1]);
+	}
+	return { grand, sub };
+}
+
+// The AUTHORITATIVE doctrine source (replaces parseDoctrines above wherever available — kept
+// only as a fallback for a tag outside COUNTRY_DOCTRINE_INDEX). unit_modifiers only ever
+// reflects doctrines that have produced an active gameplay modifier; confirmed directly against
+// a real save that a country can have a Grand Doctrine assigned to a folder (e.g. Air) with
+// zero matching unit_modifiers entries, which made that folder wrongly look unassigned. This
+// instead reads the save's own top-level `doctrine={countries={ {folder={...}} {folder={...}}
+// ... }}` array, which explicitly states `grand_doctrine=`/`folder=`/`sub_doctrine=` per
+// folder — but it's POSITIONAL, not tag-keyed, so each tag's slot has to be known up front.
+//
+// That position was reverse-engineered and VERIFIED against a real save: it's the tag's index
+// (1-based; index 0 is a reserved/unused slot) in country-tag load order — the mod's own
+// common/country_tags/*.txt files (in file-then-line order), followed by the base game's
+// common/country_tags/*.txt files for any tag the mod doesn't already define. Confirmed exactly:
+// that ordering produces 441 total slots for 440 unique tags + 1 reserved, matching the save's
+// actual doctrine.countries array length, and GER's slot at that computed index held exactly
+// GER's known land doctrine (new_mobile_warfare + its known 8 subdoctrine picks).
+//
+// Regenerate if the mod's or base game's country_tags files change:
+//   node -e "<see the derivation in extract-country-tag-order.js>"
+const COUNTRY_DOCTRINE_INDEX = {
+	GER: 1, ENG: 2, SOV: 3, FRA: 5, SPR: 15, ITA: 16, ROM: 17, BUL: 26, HUN: 30,
+	AST: 33, CAN: 37, JAP: 48, SAF: 60, USA: 68, RAJ: 78, UKR: 100, MAN: 113,
+};
+
+function parseCountryDoctrineBlock(block) {
+	const outer = walkAndCapture(block, (k) => k === "folder");
+	const foldersBody = (outer.get("folder") || [])[0];
+	if (!foldersBody) return { grand: [], sub: [] };
+	const grand = [];
+	const sub = [];
+	for (const entry of splitAnonymousBlocks(foldersBody)) {
+		const grandMatch = /(?:^|\n)\s*grand_doctrine="([^"]+)"/.exec(entry);
+		if (grandMatch) grand.push(grandMatch[1]);
+		for (const m of entry.matchAll(/(?:^|\n)\s*sub_doctrine="([^"]+)"/g)) sub.push(m[1]);
+	}
+	return { grand, sub };
+}
+
+// Parsed ONCE per save (not per-country) — the doctrine.countries array covers every tag in
+// the game at once, so there's no reason to re-scan it per country the way parseDoctrines does.
+function parseAllCountryDoctrines(text, tags) {
+	const out = {};
+	const docIdx = text.indexOf("\ndoctrine={");
+	if (docIdx === -1) return out;
+	const docBrace = text.indexOf("{", docIdx);
+	const docEnd = skipValue(text, docBrace);
+	const docBody = text.slice(docBrace + 1, Math.max(docBrace + 1, docEnd - 1));
+	const ctrOuter = walkAndCapture(docBody, (k) => k === "countries");
+	const ctrBody = (ctrOuter.get("countries") || [])[0];
+	if (!ctrBody) return out;
+	const blocks = splitAnonymousBlocks(ctrBody);
+	for (const tag of tags) {
+		const idx = COUNTRY_DOCTRINE_INDEX[tag];
+		if (idx === undefined || !blocks[idx]) continue;
+		out[tag] = parseCountryDoctrineBlock(blocks[idx]);
+	}
+	return out;
+}
+
+// production={ ... industrial_organisations={ TPMP_generic_assault_tank_organization={
+// size=0 funds=0 ... } GER_focke_wulf_organization={ size=1 funds=686.945 policy=... } ... }
+// ... } — nested inside the country's `production` block (confirmed by walking its raw
+// brace context directly, same as deployment/unit_modifiers above), not top-level. Every
+// country starts with ~20+ template organization slots that were never actually founded
+// (size=0, blank name, no chosen policy) — those are filtered out here, not just at render
+// time, since they're not real organizations, just unused options.
+function parseMIOs(productionBody) {
+	if (!productionBody) return [];
+	const outer = walkAndCapture(productionBody, (k) => k === "industrial_organisations");
+	const orgsBody = (outer.get("industrial_organisations") || [])[0];
+	if (!orgsBody) return [];
+	const orgs = walkAndCapture(orgsBody, () => true);
+	const out = [];
+	for (const [id, bodies] of orgs) {
+		const orgBody = bodies[bodies.length - 1];
+		const num = (re) => {
+			const v = firstMatch(re, orgBody);
+			return v === undefined ? null : Number(v);
+		};
+		const size = num(/(?:^|\n)\s*size=([\d.]+)/);
+		if (!size || size < 1) continue;
+		const policyMatch = /(?:^|\n)\s*policy=(\w+)/.exec(orgBody);
+		// unlocked={ trait="generic_mio_trait_standard_infantry_1b" } appears once per node the
+		// player has actually spent points to unlock in this MIO's upgrade tree (its own small
+		// skill-tree-style grid, separate from the org's level/size) — NOT the free initial_trait
+		// every org starts with, which never appears in this list.
+		const traits = [...orgBody.matchAll(/unlocked=\{\s*trait="([^"]+)"\s*\}/g)].map((m) => m[1]);
+		out.push({
+			id,
+			size,
+			funds: num(/(?:^|\n)\s*funds=([\d.]+)/) || 0,
+			points: num(/(?:^|\n)\s*points=([\d.]+)/) || 0,
+			researchBonus: num(/(?:^|\n)\s*research_bonus=([\d.]+)/) || 0,
+			policy: policyMatch ? policyMatch[1] : null,
+			traits,
+		});
+	}
+	return out;
+}
+
+// One entry from intelligence_agency's operative={...} list. Per-operative `state=` must be
+// matched as a WORD specifically (on_mission/on_capture/...) — a naive first-match regex
+// would instead grab the NUMERIC state=<province id> nested inside that same operative's own
+// mission sub-block (mission={ quiet_network={ target="SOV" state=219 } }), which appears
+// earlier in the body than the operative's own real state field — verified directly against
+// a real save, where both literally use the key name "state=" for unrelated things.
+function parseOperative(opBody) {
+	// id={ id=N type=4713 } at the very top of the body — the stable identity to diff
+	// operatives across saves by, same convention as every other id'd entity in this parser
+	// (equipment, characters, templates); matching on name alone would risk collisions.
+	const idMatch = /(?:^|\n)\s*id=\{\s*id=(\d+)/.exec(opBody);
+	const nameToken = firstMatch(/(?:^|\n)\s*name="([^"]*)"/, opBody);
+	const skill = firstMatch(/(?:^|\n)\s*skill=(\d+)/, opBody);
+	const experience = firstMatch(/(?:^|\n)\s*experience=([\d.]+)/, opBody);
+	const traitsMatch = /(?:^|\n)\s*traits=\{([^}]*)\}/.exec(opBody);
+	const traits = traitsMatch ? traitsMatch[1].trim().split(/\s+/).filter(Boolean) : [];
+	const state = firstMatch(/(?:^|\n)\s*state=([a-zA-Z_]+)/, opBody) || "available";
+
+	let mission = null;
+	const midx = opBody.search(/(?:^|\n)\s*mission\s*=\s*\{/);
+	if (midx !== -1) {
+		const braceIdx = opBody.indexOf("{", midx);
+		const mEnd = skipValue(opBody, braceIdx);
+		const missionBody = opBody.slice(braceIdx + 1, mEnd - 1);
+		const missionEntries = walkAndCapture(missionBody, () => true);
+		const [missionType] = missionEntries.keys();
+		if (missionType) {
+			const innerBody = missionEntries.get(missionType)[0];
+			const target = firstMatch(/target="([^"]*)"/, innerBody);
+			mission = { type: missionType, target: target || null };
+		}
+	}
+
+	return {
+		id: idMatch ? Number(idMatch[1]) : null,
+		nameToken: nameToken || null,
+		skill: skill != null ? Number(skill) : null,
+		experience: experience != null ? Number(experience) : null,
+		traits,
+		state,
+		mission,
+	};
+}
+
+// intelligence_agency={ name="Abwehr" is_created=yes upgrade_progress=24 upgrades={
+// upgrade_form_department=1 upgrade_passive_defense=4 ... } operative={...} operative={...}
+// ... } — a top-level field of the country body (confirmed directly). is_created=no gates an
+// agency that was never actually founded, even though the data structure exists either way.
+function parseSpyAgency(agencyBody) {
+	if (!agencyBody) return null;
+	const isCreated = firstMatch(/(?:^|\n)\s*is_created=(\w+)/, agencyBody);
+	if (isCreated !== "yes") return null;
+	const name = firstMatch(/(?:^|\n)\s*name="([^"]*)"/, agencyBody);
+	const upgradeProgress = firstMatch(/(?:^|\n)\s*upgrade_progress=([\d.]+)/, agencyBody);
+
+	const outer = walkAndCapture(agencyBody, (k) => k === "upgrades" || k === "operative");
+	const upgradesBody = (outer.get("upgrades") || [])[0] || "";
+	const upgradeEntries = walkAndCapture(upgradesBody, () => true);
+	const upgrades = {};
+	for (const [key, bodies] of upgradeEntries) upgrades[key] = Number(bodies[0]);
+
+	const operatives = (outer.get("operative") || []).map(parseOperative);
+
+	return {
+		name: name || null,
+		upgradeProgress: upgradeProgress != null ? Number(upgradeProgress) : 0,
+		upgrades,
+		operatives,
+	};
+}
+
 function extractCountryFields(body) {
 	const captured = walkAndCapture(body, (k) => COUNTRY_FIELD_KEYS.has(k));
 	const get = (k) => {
@@ -329,6 +561,9 @@ function extractCountryFields(body) {
 		advisors: parseAppointedAdvisors(get("characters")),
 		focusTreeId: get("focus_tree") || null,
 		unitCounts: parseUnitCounts(get("units")),
+		doctrines: parseDoctrines(get("deployment")),
+		mios: parseMIOs(get("production")),
+		spyAgency: parseSpyAgency(get("intelligence_agency")),
 	};
 }
 
@@ -535,6 +770,7 @@ function parseSave(text, targetTags) {
 	const playerCountries = parsePlayerCountries(text, tags);
 	const stateFactories = parseStateFactories(text, tags);
 	const divisionTemplates = parseDivisionTemplates(text, tags);
+	const countryDoctrines = parseAllCountryDoctrines(text, tags);
 
 	const countriesIdx = text.indexOf("\ncountries={");
 	const countries = {};
@@ -552,6 +788,7 @@ function parseSave(text, targetTags) {
 			// edge cases (e.g. re-tagged nations); keep the last body, matching save order.
 			const body = bodies[bodies.length - 1];
 			countries[tag] = extractCountryFields(body);
+			if (countryDoctrines[tag]) countries[tag].doctrines = countryDoctrines[tag];
 			countries[tag].factories = stateFactories[tag] || { mil: 0, civ: 0 };
 			const templates = divisionTemplates[tag] || [];
 			const unitCounts = countries[tag].unitCounts || {};
@@ -591,7 +828,7 @@ function parseSave(text, targetTags) {
 	}));
 }
 
-const HOI4Parser = { parseSave, TARGET_TAGS, dateSortKey, walkAndCapture, skipValue, extractAdvisorRoster, extractEquipmentRoster };
+const HOI4Parser = { parseSave, TARGET_TAGS, dateSortKey, walkAndCapture, skipValue, splitAnonymousBlocks, extractAdvisorRoster, extractEquipmentRoster };
 
 if (typeof module !== "undefined" && module.exports) {
 	module.exports = HOI4Parser;

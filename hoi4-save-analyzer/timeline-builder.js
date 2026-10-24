@@ -69,6 +69,23 @@ function buildCountryTimeline(saves, tag) {
 	// THEN deleted later — the common sequence) should still get a closing "deleted" event;
 	// checking only the immediately-preceding save's count missed exactly that sequence.
 
+	// { date, kind: 'established_before_tracking' | 'new_org' | 'leveled_up' | 'policy_changed',
+	//   orgId, size?, from?, to?, policy? } — same event-log shape as armyEvents: an MIO's size
+	// (its level) and chosen policy barely change, so this only fires when something actually
+	// does. No removal tracking here (unlike armyEvents) — there's no evidence an org can be
+	// un-founded once size reaches 1, so that complexity isn't warranted without a real case.
+	const mioEvents = [];
+	let prevMIOs = null; // Map<orgId, {size, policy}> from the previous save that had MIO data
+
+	// { date, kind: 'upgrade_leveled' | 'mission_started' | 'mission_ended' | 'operative_captured',
+	//   upgradeKey?, from?, to?, operativeId?, nameToken?, missionType?, target? } — agency
+	// upgrade categories and operative mission assignments both barely change month to month,
+	// same event-log shape as everything else here.
+	const spyAgencyEvents = [];
+	let prevSpyUpgrades = null; // Map<upgradeKey, level>
+	let prevSpyOperatives = null; // Map<operativeId, {nameToken, state, missionType, target}>
+
+
 	for (const save of saves) {
 		const c = save.countries[tag];
 		if (!c) continue;
@@ -259,6 +276,75 @@ function buildCountryTimeline(saves, tag) {
 			prevArmyCounts = currentCounts;
 		}
 
+		if (c.mios) {
+			const currentMIOState = new Map(c.mios.map((org) => [org.id, { size: org.size, policy: org.policy, traits: new Set(org.traits || []) }]));
+			if (!prevMIOs) {
+				for (const [id, org] of currentMIOState) {
+					mioEvents.push({ date, kind: "established_before_tracking", orgId: id, size: org.size, policy: org.policy });
+				}
+			} else {
+				for (const [id, org] of currentMIOState) {
+					const prev = prevMIOs.get(id);
+					if (!prev) {
+						mioEvents.push({ date, kind: "new_org", orgId: id, size: org.size, policy: org.policy });
+						// A freshly founded org can already have its first upgrade unlocked
+						// in the very same save it was founded in — still worth a dated event.
+						for (const trait of org.traits) mioEvents.push({ date, kind: "upgrade_unlocked", orgId: id, trait });
+					} else {
+						if (prev.size !== org.size) {
+							mioEvents.push({ date, kind: "leveled_up", orgId: id, from: prev.size, to: org.size });
+						}
+						if (prev.policy !== org.policy && org.policy) {
+							mioEvents.push({ date, kind: "policy_changed", orgId: id, policy: org.policy });
+						}
+						for (const trait of org.traits) {
+							if (!prev.traits.has(trait)) mioEvents.push({ date, kind: "upgrade_unlocked", orgId: id, trait });
+						}
+					}
+				}
+			}
+			prevMIOs = currentMIOState;
+		}
+
+		if (c.spyAgency) {
+			const currentUpgrades = new Map(Object.entries(c.spyAgency.upgrades || {}));
+			if (!prevSpyUpgrades) {
+				// No baseline-established-before-tracking event here (unlike army templates) —
+				// agency upgrade levels aren't as individually notable as a whole division
+				// template existing, and the current-state table already shows every level.
+			} else {
+				for (const [key, level] of currentUpgrades) {
+					const prevLevel = prevSpyUpgrades.get(key) ?? 0;
+					if (level !== prevLevel) {
+						spyAgencyEvents.push({ date, kind: "upgrade_leveled", upgradeKey: key, from: prevLevel, to: level });
+					}
+				}
+			}
+			prevSpyUpgrades = currentUpgrades;
+
+			const currentOperatives = new Map(
+				(c.spyAgency.operatives || []).filter((op) => op.id != null).map((op) => [
+					op.id,
+					{ nameToken: op.nameToken, state: op.state, missionType: op.mission?.type || null, target: op.mission?.target || null },
+				])
+			);
+			if (prevSpyOperatives) {
+				for (const [id, op] of currentOperatives) {
+					const prev = prevSpyOperatives.get(id);
+					const prevMissionType = prev ? prev.missionType : null;
+					if (op.missionType && op.missionType !== prevMissionType) {
+						spyAgencyEvents.push({ date, kind: "mission_started", operativeId: id, nameToken: op.nameToken, missionType: op.missionType, target: op.target });
+					} else if (!op.missionType && prevMissionType) {
+						spyAgencyEvents.push({ date, kind: "mission_ended", operativeId: id, nameToken: op.nameToken, missionType: prevMissionType, target: prev.target });
+					}
+					if (op.state === "on_capture" && (!prev || prev.state !== "on_capture")) {
+						spyAgencyEvents.push({ date, kind: "operative_captured", operativeId: id, nameToken: op.nameToken, target: op.target });
+					}
+				}
+			}
+			prevSpyOperatives = currentOperatives;
+		}
+
 		if (c.focusTreeId) {
 			const lastEra = focusTreeEras[focusTreeEras.length - 1];
 			if (lastEra && lastEra.treeId === c.focusTreeId) {
@@ -282,6 +368,11 @@ function buildCountryTimeline(saves, tag) {
 	const currentAdvisors = (lastSaveWithCountry && lastSaveWithCountry.countries[tag].advisors) || [];
 	const focusTreeId = (lastSaveWithCountry && lastSaveWithCountry.countries[tag].focusTreeId) || null;
 	const currentArmyTemplates = (lastSaveWithCountry && lastSaveWithCountry.countries[tag].armyTemplates) || [];
+	// Doctrine is static in this mod (can't be respecced once chosen), so unlike advisors/laws/
+	// army templates this only ever needs the latest snapshot — no event history to track.
+	const currentDoctrines = (lastSaveWithCountry && lastSaveWithCountry.countries[tag].doctrines) || { grand: [], sub: [] };
+	const currentMIOs = (lastSaveWithCountry && lastSaveWithCountry.countries[tag].mios) || [];
+	const currentSpyAgency = (lastSaveWithCountry && lastSaveWithCountry.countries[tag].spyAgency) || null;
 
 	return {
 		tag,
@@ -291,6 +382,11 @@ function buildCountryTimeline(saves, tag) {
 		advisorEvents,
 		currentAdvisors,
 		currentArmyTemplates,
+		currentDoctrines,
+		currentMIOs,
+		mioEvents,
+		currentSpyAgency,
+		spyAgencyEvents,
 		armyEvents,
 		focusTreeId,
 		focusTreeEras,

@@ -32,6 +32,8 @@ const techYears = fs.readFileSync("tech-years.json", "utf8");
 const equipmentCategories = fs.readFileSync("equipment-categories.json", "utf8");
 const techCategories = fs.readFileSync("tech-categories.json", "utf8");
 const countryColors = fs.readFileSync("country-colors.json", "utf8");
+const doctrines = fs.readFileSync("doctrines.json", "utf8");
+const mioTraits = fs.readFileSync("mio-traits.json", "utf8");
 
 // Using a replacer FUNCTION (not a plain string) for every substitution below: the file
 // contents being spliced in (JS source, JSON data) can legitimately contain "$"-sequences
@@ -51,6 +53,8 @@ inline("/*__TECH_YEARS__*/", techYears);
 inline("/*__EQUIPMENT_CATEGORIES__*/", equipmentCategories);
 inline("/*__TECH_CATEGORIES__*/", techCategories);
 inline("/*__COUNTRY_COLORS__*/", countryColors);
+inline("/*__DOCTRINES__*/", doctrines);
+inline("/*__MIO_TRAITS__*/", mioTraits);
 
 fs.writeFileSync("index.html", html);
 console.log("Wrote index.html, size:", fs.statSync("index.html").size);

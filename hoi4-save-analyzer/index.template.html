@@ -140,10 +140,37 @@
   th, td { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--border); }
   th { color: var(--muted); font-weight: 500; }
 
-  #ppChart { width: 100%; height: 160px; display:block; }
   .ppNow { font-size: 22px; font-weight: 700; color: var(--accent2); }
 
   .empty { color: var(--muted); font-size: 13px; padding: 10px 0; }
+
+  .doctrineGrandBox {
+    text-align: center;
+    font-weight: 700;
+    font-size: 15px;
+    padding: 10px;
+    margin-bottom: 12px;
+    border: 1px solid var(--accent);
+    border-radius: 8px;
+    background: var(--panel2);
+  }
+  .doctrineGrid { display: grid; gap: 8px; }
+  .doctrineTrack {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--panel2);
+    padding: 8px;
+    text-align: center;
+    min-height: 56px;
+  }
+  .doctrineTrackName { font-size: 11.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; margin-bottom: 6px; }
+  .doctrineTrackSub { font-size: 13px; font-weight: 600; }
+  .doctrineTrackSub.empty { font-weight: normal; color: var(--muted); font-style: italic; }
+
+  .mioOrg { border-bottom: 1px solid var(--border); padding: 6px 0; }
+  .mioOrg summary { cursor: pointer; display: flex; flex-direction: column; gap: 2px; user-select: none; }
+  .mioOrgName { font-size: 13px; font-weight: 600; }
+  .mioOrgMeta { font-size: 11.5px; color: var(--muted); }
 </style>
 </head>
 <body>
@@ -192,6 +219,7 @@ let advisorRoster = new Map(); // characterId -> {name, slot, ideaToken, cost}, 
 let equipmentRoster = new Map(); // equipmentVariantId -> archetype id (e.g. "light_tank_chassis_1936"), built once per batch
 let selectedTag = null;
 let selectedFocusEraTreeId = null; // null = "show the most recent era" (reset whenever the selected country changes)
+let activeDoctrineFolder = "land"; // which of the Army/Navy/Air doctrine tabs is showing
 let productionSliderIndex = null; // null = "show the latest snapshot" (reset whenever the selected country changes)
 let constructionSliderIndex = null; // same idea, for the separate Construction panel's own slider
 let worker = null;
@@ -491,7 +519,21 @@ function completionRankHue(rank, maxRank) {
 // (vector), so drawing it onto a larger canvas target re-rasterizes it crisply at that
 // larger size rather than blurrily stretching a fixed-resolution bitmap. On-screen size is
 // unaffected since this only touches the canvas/export step, not the SVG's own dimensions.
-const FOCUS_MAP_EXPORT_SCALE = 1.5;
+//
+// A flat multiplier doesn't actually keep boxes a consistent SIZE across countries, even
+// though it keeps them at a consistent PIXEL count: every focus box is the same fixed
+// NODE_W/NODE_H in SVG units regardless of how many focuses a country has, so a huge tree
+// (more focuses = wider/taller canvas, same box size) just means more canvas around
+// identically-sized boxes — and the moment that PNG gets viewed at a normal "fit to screen"
+// zoom (which is how any image viewer opens a multi-thousand-pixel image), the wider canvas
+// gets zoomed out further, making the boxes look visibly smaller than a small country's
+// despite being the same real pixel size. Growing the scale with tree width compensates for
+// that — sqrt-dampened and capped so a huge tree's export doesn't balloon into an
+// unreasonable file size.
+function computeExportScale(treeWidth) {
+  const REFERENCE_WIDTH = 3000, MIN_SCALE = 1.3, MAX_SCALE = 2.6;
+  return Math.min(MAX_SCALE, MIN_SCALE * Math.sqrt(Math.max(treeWidth, REFERENCE_WIDTH) / REFERENCE_WIDTH));
+}
 
 // Shared by every PNG export (focus map alone, or the full country poster): rasterizes a
 // standalone SVG markup string onto a canvas at the given target size and triggers a
@@ -536,8 +578,10 @@ function svgMarkupToPNG(svgMarkup, width, height, filename) {
 function exportFocusMapPNG(tag) {
   const svgEl = document.getElementById("focusMapSvg");
   if (!svgEl) return;
-  const width = Number(svgEl.getAttribute("width")) * FOCUS_MAP_EXPORT_SCALE;
-  const height = Number(svgEl.getAttribute("height")) * FOCUS_MAP_EXPORT_SCALE;
+  const nativeWidth = Number(svgEl.getAttribute("width"));
+  const scale = computeExportScale(nativeWidth);
+  const width = nativeWidth * scale;
+  const height = Number(svgEl.getAttribute("height")) * scale;
   svgMarkupToPNG(svgEl.outerHTML, width, height, `hoi4_focus_map_${tag}.png`);
 }
 
@@ -609,17 +653,20 @@ function buildResearchFocusSummary(t) {
 // snapshot, civs are still growing as of the data we have — only when later snapshots exist
 // and show no further growth is it a genuine, confirmed plateau.
 //
-// Only looks at saves up to Pearl Harbor — a country's factory count (see parseStateFactories
-// in parser.js) is based on which states it currently CONTROLS, not which it originally
-// built, so once the whole war is in full swing, territory capture/loss can swing the number
-// by dozens in a single month (verified directly: England's real data jumps +26 then +47 in
-// consecutive months in mid-1942 — construction alone cannot do that). That's not "they built
-// more civs", it's conquest, and would corrupt the "how many did they deliberately build"
-// signal this is trying to measure. Cutting off there keeps the measurement to the period
-// where a factory-count change still reliably means construction.
-const CIV_CAP_CUTOFF_DATE = "1941.12.1.1"; // Pearl Harbor
-function buildCivFactoryPlateau(t) {
-  const cutoffKey = HOI4Parser.dateSortKey(CIV_CAP_CUTOFF_DATE);
+// Only looks at saves up to THIS country's own war-entry date (see WAR_ENTRY_DATES) — a
+// country's factory count (see parseStateFactories in parser.js) is based on which states it
+// currently CONTROLS, not which it originally built, so once a country is actually at war,
+// territory capture/loss can swing the number by dozens in a single month (verified directly:
+// England's real data jumps +26 then +47 in consecutive months in mid-1942, which construction
+// alone cannot do — and even earlier than that, an early-war conquest like Ethiopia can
+// already inflate it well before any later, bigger war milestone). A single universal cutoff
+// (e.g. Pearl Harbor) isn't early enough for a country whose own war — and therefore its own
+// territory swings — starts much earlier, like England's Danzig entry in Sept 1939; using
+// each country's own benchmark instead keeps the measurement to that country's actual
+// peacetime period, not just "before the World War is in full global swing".
+function buildCivFactoryPlateau(t, tag) {
+  const cutoffDate = WAR_ENTRY_DATES[tag];
+  const cutoffKey = cutoffDate ? HOI4Parser.dateSortKey(cutoffDate) : Infinity;
   const snaps = (t.productionSnapshots || []).filter((s) => s.factories && HOI4Parser.dateSortKey(s.date) <= cutoffKey);
   if (snaps.length < 2) return null;
   let lastIncreaseIdx = 0;
@@ -791,7 +838,7 @@ function exportCountryPosterPNG(tag) {
   const warCard = buildCardSVG(col1X, gridY, colW, "Army at War Entry", warLines);
 
   const researchFocus = buildResearchFocusSummary(t);
-  const civPlateau = buildCivFactoryPlateau(t);
+  const civPlateau = buildCivFactoryPlateau(t, tag);
   const riLines = [{
     text: researchFocus.length ? `Research focused: ${researchFocus.join(", ")}` : "No standout research focus detected",
     size: 14, color: researchFocus.length ? "#e6e9ef" : "#9098ab",
@@ -819,7 +866,8 @@ function exportCountryPosterPNG(tag) {
     parts.join("") +
     `</svg>`;
 
-  svgMarkupToPNG(svgMarkup, WIDTH * FOCUS_MAP_EXPORT_SCALE, totalHeight * FOCUS_MAP_EXPORT_SCALE, `hoi4_poster_${tag}.png`);
+  const posterScale = computeExportScale(treeWidth);
+  svgMarkupToPNG(svgMarkup, WIDTH * posterScale, totalHeight * posterScale, `hoi4_poster_${tag}.png`);
 }
 
 function renderFocusMapPanel(t, tag) {
@@ -946,25 +994,6 @@ function renderFocusPanel(t) {
   }
   html += `</div>`;
   return html;
-}
-
-function renderPPChartSVG(series) {
-  if (!series.length) return "";
-  const w = 560, h = 150, pad = 30;
-  const vals = series.map(p => p.political_power);
-  const min = Math.min(0, ...vals), max = Math.max(...vals, 1);
-  const x = (i) => pad + (i / Math.max(1, series.length - 1)) * (w - pad * 2);
-  const y = (v) => h - pad - ((v - min) / (max - min || 1)) * (h - pad * 2);
-  const pts = series.map((p, i) => `${x(i).toFixed(1)},${y(p.political_power).toFixed(1)}`).join(" ");
-  let ticks = "";
-  for (let i = 0; i < series.length; i += Math.max(1, Math.ceil(series.length / 6))) {
-    ticks += `<text x="${x(i)}" y="${h-8}" font-size="9" fill="#8992a6" text-anchor="middle">${fmtDate(series[i].date).replace(/, \d+$/,'')}</text>`;
-  }
-  return `<svg id="ppChart" viewBox="0 0 ${w} ${h}">
-    <line x1="${pad}" y1="${y(0)}" x2="${w-pad}" y2="${y(0)}" stroke="#2e3543" stroke-dasharray="3,3" />
-    <polyline fill="none" stroke="#ffb454" stroke-width="2" points="${pts}" />
-    ${ticks}
-  </svg>`;
 }
 
 function prettifyToken(token) {
@@ -1148,7 +1177,6 @@ function renderPoliticalPowerPanel(t) {
   if (t.ppSeries.length) {
     const now = t.ppSeries[t.ppSeries.length - 1].political_power;
     html += `<div class="ppNow">${now.toFixed(1)} PP</div><div class="sub">as of ${fmtDate(t.ppSeries[t.ppSeries.length-1].date)}</div>`;
-    html += renderPPChartSVG(t.ppSeries);
   } else {
     html += `<div class="empty">No political power data found.</div>`;
   }
@@ -1207,12 +1235,12 @@ function renderPoliticalPowerPanel(t) {
 
   const merged = [...advisorItems, ...lawItems, ...unexplainedItems].sort((a, b) => HOI4Parser.dateSortKey(a.date) - HOI4Parser.dateSortKey(b.date));
 
-  html += `<div class="sub" style="margin-top:10px">What happened to it</div><div class="scroll">`;
+  html += `<details style="margin-top:10px"><summary class="sub" style="cursor:pointer">What happened to it</summary><div class="scroll">`;
   if (!merged.length) html += `<div class="empty">No advisor/law changes or unexplained balance shifts detected between loaded saves.</div>`;
-  for (const item of [...merged].reverse()) {
+  for (const item of merged) {
     html += `<div class="eventItem"><div class="date">${fmtDate(item.date)}</div><div>${item.html}</div></div>`;
   }
-  html += `</div>`;
+  html += `</div></details>`;
 
   const otherEvents = t.ppEvents.filter((e) => !resolveIdeaLabel(e.label).isLaw);
   html += `<details style="margin-top:10px"><summary class="sub" style="cursor:pointer">Other national spirits (${otherEvents.length} change${otherEvents.length===1?"":"s"}, usually free)</summary><div class="scroll">`;
@@ -1529,6 +1557,262 @@ function renderArmyPanel(t) {
   return html;
 }
 
+// Doctrine is static in TPMP — once chosen it can't be respecced, so this is just a current
+// snapshot (see currentDoctrines in timeline-builder.js), not an event/history feed like
+// Army or Production. Source: each country's own unit_modifiers list (see parseDoctrines in
+// parser.js), filtered to type=grand_doctrine / type=sub_doctrine entries.
+// Mirrors the mod's own in-game doctrine screen layout: Army/Navy/Air tabs (= the land/naval/
+// air "folders" a grand doctrine and its tracks belong to), one Grand Doctrine banner on top,
+// then the folder's tracks laid out in the same grid position the game itself uses (land: 2
+// rows of 4; navy/air only have 4 tracks total, so 1 row of 4). No event history here —
+// doctrine picks are effectively permanent in this mod, so this only ever shows current state.
+const DOCTRINE_FOLDERS = [
+  { id: "land", label: "Army" },
+  { id: "naval", label: "Navy" },
+  { id: "air", label: "Air" },
+];
+
+function renderDoctrinePanel(t) {
+  const D = window.DOCTRINES;
+  let html = `<h2>Doctrine</h2>`;
+  if (!D) { html += `<div class="empty">No doctrine reference data bundled — re-run extract-doctrines.js.</div>`; return html; }
+
+  const { grand, sub } = t.currentDoctrines || { grand: [], sub: [] };
+
+  html += `<div style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:12px;">` +
+    DOCTRINE_FOLDERS.map((f) => `<button class="tab${f.id === activeDoctrineFolder ? " active" : ""}" onclick="activeDoctrineFolder='${f.id}';renderMain();">${f.label}</button>`).join("") +
+    `</div>`;
+
+  const folder = activeDoctrineFolder;
+  const grandId = grand.find((id) => D.grandDoctrines[id] && D.grandDoctrines[id].folder === folder);
+  const grandName = grandId ? D.grandDoctrines[grandId].name : null;
+  html += `<div class="doctrineGrandBox">${grandName ? escapeXML(grandName) : `<span style="color:var(--muted)">No Grand Doctrine assigned</span>`}</div>`;
+
+  const folderTracks = Object.entries(D.tracks)
+    .filter(([, meta]) => meta.folder === folder)
+    .sort((a, b) => a[1].order - b[1].order);
+
+  // A country can only have one active subdoctrine per track at a time, so this is a simple map.
+  const subByTrack = new Map();
+  for (const subId of sub) {
+    const meta = D.subdoctrines[subId];
+    if (meta) subByTrack.set(meta.track, subId);
+  }
+
+  html += `<div class="doctrineGrid" style="grid-template-columns: repeat(4, 1fr);">`;
+  for (const [trackId, meta] of folderTracks) {
+    const chosenId = subByTrack.get(trackId);
+    const chosenName = chosenId && D.subdoctrines[chosenId] ? D.subdoctrines[chosenId].name : null;
+    html += `<div class="doctrineTrack">
+      <div class="doctrineTrackName">${escapeXML(meta.name)}</div>
+      <div class="doctrineTrackSub${chosenName ? "" : " empty"}">${chosenName ? escapeXML(chosenName) : "Not yet chosen"}</div>
+    </div>`;
+  }
+  html += `</div>`;
+
+  return html;
+}
+
+// Same event-log pattern as renderArmyEvents: each badge states the action, the text never
+// repeats it.
+function renderMIOEvents(events) {
+  if (!events.length) return `<div class="empty">No MIO changes detected.</div>`;
+  let html = `<div class="scroll" style="max-height:180px;">`;
+  for (const e of events) {
+    const orgName = prettifyToken(e.orgId);
+    let badge, text;
+    if (e.kind === "established_before_tracking") {
+      badge = `<span class="badge dec">BASELINE</span>`;
+      text = `${escapeXML(orgName)} (level ${e.size})`;
+    } else if (e.kind === "new_org") {
+      badge = `<span class="badge add">FOUNDED</span>`;
+      text = `${escapeXML(orgName)} (level ${e.size})`;
+    } else if (e.kind === "leveled_up") {
+      badge = `<span class="badge add">+${e.to - e.from}</span>`;
+      text = `${escapeXML(orgName)} — now level ${e.to}`;
+    } else if (e.kind === "policy_changed") {
+      badge = `<span class="badge dec">POLICY</span>`;
+      text = `${escapeXML(orgName)} — ${escapeXML(prettifyToken(e.policy))}`;
+    } else if (e.kind === "upgrade_unlocked") {
+      const orgTree = window.MIO_TRAITS && window.MIO_TRAITS.orgTrees[e.orgId];
+      const traitInfo = orgTree && orgTree.find((n) => n.id === e.trait);
+      badge = `<span class="badge add">UPGRADE</span>`;
+      text = `${escapeXML(orgName)} — ${escapeXML(traitInfo ? traitInfo.name : prettifyToken(e.trait))}`;
+    }
+    html += `<div class="eventItem"><div class="date">${fmtDate(e.date)}</div><div>${badge}${text}</div></div>`;
+  }
+  html += `</div>`;
+  return html;
+}
+
+// Military Industrial Organizations — companies that unlock production/research bonuses for
+// specific equipment lines. Every country starts with 20+ unfounded template slots (level 0,
+// blank name); those are already filtered out at parse time (see parseMIOs in parser.js), so
+// anything here was actually founded and leveled up by the player.
+//
+// Each MIO has its own small upgrade tree — nodes with prerequisites, laid out on an (x,y) grid
+// exactly like a focus tree (see renderFocusMapPanel, which this mirrors) — so it's drawn the
+// same way: the FULL tree (locked nodes included, from mio-traits.json's static definitions),
+// with edges to each node's any_parent(s), unlocked nodes highlighted and dated from mioEvents
+// (an upgrade_unlocked event per node the first save it appears in — undated/"before tracking"
+// if it was already unlocked in the very first loaded save).
+function renderMIOTree(org, t) {
+  const MT = window.MIO_TRAITS;
+  // Each org's tree is resolved independently at build time (include chains + per-org overrides
+  // already flattened in — see extract-mio-traits.js), so this is just that org's own node list,
+  // never a shared/deduplicated-across-orgs lookup.
+  const nodes = (MT && MT.orgTrees && MT.orgTrees[org.id]) || [];
+  if (!nodes.length) return `<div class="empty">No upgrade tree data bundled for this organization — re-run extract-mio-traits.js.</div>`;
+
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  const unlocked = new Set(org.traits || []);
+
+  // Normally each node is unlocked exactly once, so last-write-wins is fine either way.
+  const unlockDate = new Map();
+  for (const e of t.mioEvents || []) {
+    if (e.kind === "upgrade_unlocked" && e.orgId === org.id) unlockDate.set(e.trait, e.date);
+  }
+
+  const COL_W = 98, ROW_H = 48, NODE_W = 90, NODE_H = 34;
+  const minX = Math.min(...nodes.map((n) => n.x));
+  const minY = Math.min(...nodes.map((n) => n.y));
+  const maxX = Math.max(...nodes.map((n) => n.x));
+  const maxY = Math.max(...nodes.map((n) => n.y));
+  const px = (x) => (x - minX) * COL_W + 14;
+  const py = (y) => (y - minY) * ROW_H + 14;
+  const width = px(maxX) + NODE_W + 14;
+  const height = py(maxY) + NODE_H + 14;
+
+  let edges = "";
+  for (const n of nodes) {
+    for (const parentId of n.parents || []) {
+      const p = byId.get(parentId);
+      if (!p) continue;
+      const x1 = px(p.x) + NODE_W / 2, y1 = py(p.y) + NODE_H;
+      const x2 = px(n.x) + NODE_W / 2, y2 = py(n.y);
+      const midY = (y1 + y2) / 2;
+      const bothUnlocked = unlocked.has(n.id) && unlocked.has(parentId);
+      edges += `<path d="M${x1},${y1} C${x1},${midY} ${x2},${midY} ${x2},${y2}" fill="none" stroke="${bothUnlocked ? "#3d6b4a" : "#39404f"}" stroke-width="1.5"/>`;
+    }
+  }
+
+  let boxes = "";
+  for (const n of nodes) {
+    const x = px(n.x), y = py(n.y);
+    const isUnlocked = unlocked.has(n.id);
+    const date = unlockDate.get(n.id);
+    let fill = "#2a2f3a", stroke = "#454d5e", textColor = "#9098ab";
+    if (isUnlocked) { fill = "#1d3a28"; stroke = "#6fd08c"; textColor = "#bdeccb"; }
+    const label = escapeXML(n.name.length > 20 ? n.name.slice(0, 19) + "…" : n.name);
+    const dateLabel = date ? fmtDate(date) : (isUnlocked ? "before tracking" : "");
+    const titleDate = date ? `\nUnlocked ${fmtDate(date)}` : (isUnlocked ? "\nUnlocked before this dataset started" : "\nNot yet unlocked");
+    boxes += `<g>
+      <title>${escapeXML(n.name + titleDate)}</title>
+      <rect x="${x}" y="${y}" width="${NODE_W}" height="${NODE_H}" rx="5" fill="${fill}" stroke="${stroke}" stroke-width="${isUnlocked ? 2 : 1.5}"/>
+      <text x="${x + NODE_W / 2}" y="${y + 14}" text-anchor="middle" font-size="9" fill="${textColor}" font-weight="${isUnlocked ? 600 : 400}">${label}</text>
+      ${dateLabel ? `<text x="${x + NODE_W / 2}" y="${y + 27}" text-anchor="middle" font-size="7.5" fill="${textColor}" opacity="0.75">${escapeXML(dateLabel)}</text>` : ""}
+    </g>`;
+  }
+
+  return `<div style="overflow:auto; max-height:260px; border:1px solid var(--border); border-radius:6px; margin-top:6px;">
+    <svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" style="background:#14171c">${edges}${boxes}</svg>
+  </div>`;
+}
+
+function renderMIOPanel(t) {
+  let html = `<h2>MIO</h2>`;
+  const mios = t.currentMIOs || [];
+  if (!mios.length) {
+    html += `<div class="empty">No founded MIOs (level 1+) found.</div>`;
+    return html;
+  }
+  html += `<div class="sub">Changes</div>`;
+  html += renderMIOEvents(t.mioEvents || []);
+
+  const orgNames = window.MIO_TRAITS && window.MIO_TRAITS.orgs;
+  html += `<div class="scroll">`;
+  for (const org of [...mios].sort((a, b) => b.size - a.size)) {
+    const policyLabel = org.policy ? escapeXML(prettifyToken(org.policy)) : `<span style="color:var(--muted)">None chosen</span>`;
+    const orgName = (orgNames && orgNames[org.id]) || prettifyToken(org.id);
+    const upgradeCount = (org.traits || []).length;
+    html += `<details class="mioOrg">
+      <summary>
+        <span class="mioOrgName">${escapeXML(orgName)}</span>
+        <span class="mioOrgMeta">Level ${org.size} · ${org.funds.toFixed(1)} funds · ${policyLabel} · ${upgradeCount} upgrade${upgradeCount === 1 ? "" : "s"}</span>
+      </summary>
+      ${renderMIOTree(org, t)}
+    </details>`;
+  }
+  html += `</div>`;
+  return html;
+}
+
+function renderSpyAgencyEvents(events) {
+  if (!events.length) return `<div class="empty">No spy agency changes detected.</div>`;
+  let html = `<div class="scroll" style="max-height:180px;">`;
+  for (const e of events) {
+    let badge, text;
+    if (e.kind === "upgrade_leveled") {
+      badge = `<span class="badge add">+${e.to - e.from}</span>`;
+      text = `${escapeXML(prettifyToken(e.upgradeKey))} — now level ${e.to}`;
+    } else if (e.kind === "mission_started") {
+      badge = `<span class="badge add">MISSION</span>`;
+      text = `${escapeXML(resolveCharacterName(e.nameToken))} started ${escapeXML(prettifyToken(e.missionType))}${e.target ? ` on ${escapeXML(e.target)}` : ""}`;
+    } else if (e.kind === "mission_ended") {
+      badge = `<span class="badge dec">ENDED</span>`;
+      text = `${escapeXML(resolveCharacterName(e.nameToken))}'s ${escapeXML(prettifyToken(e.missionType))}${e.target ? ` on ${escapeXML(e.target)}` : ""} ended`;
+    } else if (e.kind === "operative_captured") {
+      badge = `<span class="badge rem">CAPTURED</span>`;
+      text = `${escapeXML(resolveCharacterName(e.nameToken))}`;
+    }
+    html += `<div class="eventItem"><div class="date">${fmtDate(e.date)}</div><div>${badge}${text}</div></div>`;
+  }
+  html += `</div>`;
+  return html;
+}
+
+// Operative names come in two forms in the save: a localization token (resolveCharacterName
+// handles both — CHARACTER_NAMES lookup, falling back to prettifying the token) or a plain
+// literal name already — same resolution path either way.
+function renderSpyAgencyPanel(t) {
+  let html = `<h2>Spy Agency</h2>`;
+  const agency = t.currentSpyAgency;
+  if (!agency) {
+    html += `<div class="empty">No intelligence agency founded.</div>`;
+    return html;
+  }
+  html += `<div class="sub">${escapeXML(agency.name || "Unnamed Agency")} — overall progress ${agency.upgradeProgress}</div>`;
+  html += `<div class="sub" style="margin-top:10px">Changes</div>`;
+  html += renderSpyAgencyEvents(t.spyAgencyEvents || []);
+
+  const upgradeEntries = Object.entries(agency.upgrades || {});
+  if (upgradeEntries.length) {
+    html += `<table style="margin-top:10px"><thead><tr><th>Upgrade</th><th>Level</th></tr></thead><tbody>`;
+    for (const [key, level] of upgradeEntries) {
+      html += `<tr><td>${escapeXML(prettifyToken(key))}</td><td>${level}</td></tr>`;
+    }
+    html += `</tbody></table>`;
+  }
+
+  const operatives = agency.operatives || [];
+  html += `<div class="sub" style="margin-top:10px">Operatives (${operatives.length})</div>`;
+  if (!operatives.length) {
+    html += `<div class="empty">No operatives recruited.</div>`;
+  } else {
+    html += `<div class="scroll"><table><thead><tr><th>Name</th><th>Skill</th><th>Status</th></tr></thead><tbody>`;
+    for (const op of operatives) {
+      let statusLabel;
+      if (op.state === "on_capture") statusLabel = `<span style="color:var(--bad)">Captured</span>`;
+      else if (op.mission) statusLabel = `${escapeXML(prettifyToken(op.mission.type))}${op.mission.target ? ` &rarr; ${escapeXML(op.mission.target)}` : ""}`;
+      else statusLabel = `<span style="color:var(--muted)">Available</span>`;
+      const traitsLabel = op.traits.length ? op.traits.map((tr) => prettifyToken(tr)).join(", ") : "";
+      html += `<tr><td>${escapeXML(resolveCharacterName(op.nameToken))}${traitsLabel ? `<div class="templateComp">${escapeXML(traitsLabel)}</div>` : ""}</td><td>${op.skill ?? "?"}</td><td>${statusLabel}</td></tr>`;
+    }
+    html += `</tbody></table></div>`;
+  }
+  return html;
+}
+
 function renderMain() {
   const main = el("main");
   if (!selectedTag || !timelines) { main.style.display = "none"; return; }
@@ -1545,6 +1829,15 @@ function renderMain() {
         <div class="panel">${renderResearchPanel(t)}</div>
         <div class="panel" id="productionPanel">${renderProductionPanel(t)}</div>
         <div class="panel" id="constructionPanel">${renderConstructionPanel(t)}</div>
+      </div>
+    </div>
+    <div class="grid">
+      <div>
+        <div class="panel">${renderDoctrinePanel(t)}</div>
+      </div>
+      <div>
+        <div class="panel">${renderMIOPanel(t)}</div>
+        <div class="panel">${renderSpyAgencyPanel(t)}</div>
       </div>
     </div>
   `;
@@ -1580,6 +1873,8 @@ el("cacheInput").onchange = (e) => { if (e.target.files[0]) loadCache(e.target.f
 <script>window.EQUIPMENT_CATEGORIES = /*__EQUIPMENT_CATEGORIES__*/;</script>
 <script>window.TECH_CATEGORIES = /*__TECH_CATEGORIES__*/;</script>
 <script>window.COUNTRY_COLORS = /*__COUNTRY_COLORS__*/;</script>
+<script>window.DOCTRINES = /*__DOCTRINES__*/;</script>
+<script>window.MIO_TRAITS = /*__MIO_TRAITS__*/;</script>
 <script>/*__PARSER_SOURCE__*/</script>
 <script>/*__TIMELINE_BUILDER_SOURCE__*/</script>
 </body>
