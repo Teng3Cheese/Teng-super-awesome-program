@@ -207,7 +207,11 @@ function parseTechnology(body) {
 	for (const [id, bodies] of entries) {
 		for (const entryBody of bodies) {
 			const level = firstMatch(/level=(\d+)/, entryBody);
-			const date = firstMatch(/date="([^"]+)"/, entryBody);
+			// date="1936.1.1.12" in older saves, date=1936.1.1.12 (no quotes) in saves from
+			// newer HOI4 patches (confirmed directly: both forms appear across different
+			// batches of real saves) — match either ([^"\n]+ can't cross into the quote or
+			// the next line either way, so the trailing "? is just an optional close-quote).
+			const date = firstMatch(/date="?([^"\n]+)"?/, entryBody);
 			if (level !== undefined) {
 				done.push({ id, level: Number(level), date: date || null });
 			} else {
@@ -762,8 +766,12 @@ function parseSave(text, targetTags) {
 	// Wide enough to survive a long player_countries list (large MP games) pushing
 	// start_date/game_unique_id further down than the first ~1-2KB.
 	const header = text.slice(0, 20000);
-	const date = firstMatch(/^date="([^"]+)"/m, header) || null;
-	const startDate = firstMatch(/^start_date="([^"]+)"/m, header) || null;
+	// date="1936.2.1.1" in older saves, date=1936.2.1.1 (no quotes) in saves from newer HOI4
+	// patches (confirmed directly against a real "melted" save from this week: date and
+	// start_date came through unquoted while game_unique_id/version stayed quoted) — match
+	// either form, here and everywhere else a date gets pulled out of the save text.
+	const date = firstMatch(/^date="?([^"\n]+)"?/m, header) || null;
+	const startDate = firstMatch(/^start_date="?([^"\n]+)"?/m, header) || null;
 	const gameUniqueId = firstMatch(/^game_unique_id="([^"]+)"/m, header) || null;
 	const version = firstMatch(/^version="([^"]+)"/m, header) || null;
 
