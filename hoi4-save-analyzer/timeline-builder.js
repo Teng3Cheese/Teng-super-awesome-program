@@ -138,13 +138,16 @@ function buildCountryTimeline(saves, tag) {
 				for (const id of idSet) {
 					if (!prevAdvisors.has(id)) advisorEvents.push({ date, kind: "appointed", characterId: id, slot: bySlot.get(id) });
 				}
-				for (const id of prevAdvisors) {
-					if (!idSet.has(id)) advisorEvents.push({ date, kind: "dismissed", characterId: id, slot: null });
+				// prevAdvisors carries each advisor's LAST KNOWN slot (not just their id) so a
+				// dismissal can still say which slot opened up — needed to pair a dismissal with
+				// whoever got appointed to the same slot on the same date (a "replacement").
+				for (const [id, slot] of prevAdvisors) {
+					if (!idSet.has(id)) advisorEvents.push({ date, kind: "dismissed", characterId: id, slot });
 				}
 			} else {
 				for (const id of idSet) advisorEvents.push({ date, kind: "appointed_before_tracking", characterId: id, slot: bySlot.get(id) });
 			}
-			prevAdvisors = idSet;
+			prevAdvisors = bySlot;
 		}
 
 		if (c.technology) {
@@ -366,6 +369,7 @@ function buildCountryTimeline(saves, tag) {
 	const lastSaveWithCountry = [...saves].reverse().find((s) => s.countries[tag]);
 	const currentFocus = lastSaveWithCountry && lastSaveWithCountry.countries[tag].focus;
 	const currentAdvisors = (lastSaveWithCountry && lastSaveWithCountry.countries[tag].advisors) || [];
+	const currentIdeas = (lastSaveWithCountry && lastSaveWithCountry.countries[tag].politics && lastSaveWithCountry.countries[tag].politics.ideas) || [];
 	const focusTreeId = (lastSaveWithCountry && lastSaveWithCountry.countries[tag].focusTreeId) || null;
 	const currentArmyTemplates = (lastSaveWithCountry && lastSaveWithCountry.countries[tag].armyTemplates) || [];
 	// Doctrine is static in this mod (can't be respecced once chosen), so unlike advisors/laws/
@@ -381,6 +385,7 @@ function buildCountryTimeline(saves, tag) {
 		ppEvents,
 		advisorEvents,
 		currentAdvisors,
+		currentIdeas,
 		currentArmyTemplates,
 		currentDoctrines,
 		currentMIOs,

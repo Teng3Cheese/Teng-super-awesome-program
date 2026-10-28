@@ -136,6 +136,24 @@ function fixRelativePositions(nodes, traitEntries) {
 	}
 }
 
+// Catch-all collision cleanup, run AFTER everything else (include merge, own trait/add_trait
+// insertion, override_trait repositioning, fixRelativePositions) — confirmed directly against
+// ENG_supermarine_organization that override_trait repositioning alone can still leave multiple
+// nodes stacked on the exact same cell (e.g. two different overrides both landing on {0,2}),
+// which made the tree LOOK like it was missing upgrades — they were there, just invisibly
+// stacked under whichever one rendered last. Processes nodes in their existing order (included/
+// base-tree nodes come first, so they keep their original cell; anything layered on top that
+// collides gets nudged rightward along its row instead) and mutates x/y in place.
+function resolveCollisions(nodes) {
+	const occupied = new Map();
+	for (const n of nodes) {
+		let x = n.x;
+		while (occupied.has(`${x},${n.y}`)) x++;
+		n.x = x;
+		occupied.set(`${x},${n.y}`, n);
+	}
+}
+
 function main() {
 	const modDir = process.argv[2];
 	if (!modDir) {
@@ -147,6 +165,7 @@ function main() {
 	const orgsDir = path.join(modDir, "common", "military_industrial_organization", "organizations");
 
 	const orgNames = {};
+	const orgIncludeOf = {}; // orgId -> the id it `include`s, if any (one hop — see below)
 	// Raw per-org data, scoped to exactly what that org's own file text defines — nothing here
 	// is shared or merged across orgs yet (see point 2 in the header comment above).
 	const rawOrgs = new Map();
@@ -165,6 +184,7 @@ function main() {
 			// Most generic orgs have no explicit `name = X` field — the organization id itself
 			// IS the loc key in that case (e.g. TPMP_generic_standard_infantry_organization).
 			orgNames[orgId] = resolveName(locMap, orgNameKey || orgId, orgId);
+			if (includeId) orgIncludeOf[orgId] = includeId;
 
 			const sections = walkAndCapture(orgBody, (k) => k === "trait" || k === "add_trait" || k === "override_trait");
 			const traitEntries = [...(sections.get("trait") || []), ...(sections.get("add_trait") || [])].map(parseTraitBlock).filter(Boolean);
@@ -205,6 +225,7 @@ function main() {
 
 		chain.delete(orgId);
 		const result = [...nodes.values()];
+		resolveCollisions(result);
 		resolvedCache.set(orgId, result);
 		return result;
 	}
@@ -214,9 +235,20 @@ function main() {
 		orgTrees[orgId] = resolveTree(orgId, new Set());
 	}
 
+	// Country-specific orgs (e.g. ENG_supermarine_organization) usually carry no indication of
+	// what TYPE of designer they are beyond their own flavor name — that comes entirely from
+	// whichever archetype they `include`(e.g. generic_high_agility_fighter_aircraft_organization
+	// -> "High Agility Fighter Aircraft Designer"). Resolved one hop only (not followed further
+	// up a multi-level include chain), since that's the level the game itself distinguishes by.
+	const orgs = {};
+	for (const [orgId, name] of Object.entries(orgNames)) {
+		const includeId = orgIncludeOf[orgId];
+		orgs[orgId] = { name, baseType: includeId ? orgNames[includeId] || null : null };
+	}
+
 	const totalNodes = Object.values(orgTrees).reduce((sum, nodes) => sum + nodes.length, 0);
 	console.log(`Orgs: ${Object.keys(orgNames).length}, total resolved tree nodes (not deduplicated across orgs): ${totalNodes}`);
-	fs.writeFileSync(path.join(__dirname, "mio-traits.json"), JSON.stringify({ orgs: orgNames, orgTrees }));
+	fs.writeFileSync(path.join(__dirname, "mio-traits.json"), JSON.stringify({ orgs, orgTrees }));
 	console.log("Wrote mio-traits.json");
 }
 

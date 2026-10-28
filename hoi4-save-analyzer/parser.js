@@ -600,11 +600,18 @@ function extractAdvisorRoster(text) {
 			const ideaToken = firstMatch(/idea_token="([^"]+)"/, advisorBody);
 			const cost = firstMatch(/political_power=([\d.]+)/, advisorBody);
 			const name = firstMatch(/(?:^|\n)\s*name="([^"]+)"/, charBody);
+			// The advisor's own flavor tagline (e.g. "navy_screen_2" -> "Screens (Expert)",
+			// "silent_workhorse") — a SEPARATE traits={} field inside advisor={}, not to be
+			// confused with a military leader's own combat traits (navy_leader={ traits={...} }
+			// elsewhere in the same character, a different concept entirely).
+			const traitsMatch = /(?:^|\n)\s*traits=\{([^}]*)\}/.exec(advisorBody);
+			const traits = traitsMatch ? allMatches(/"([^"]+)"/g, traitsMatch[1]) : [];
 			roster.set(Number(idMatch[1]), {
 				name: name || ideaToken || "unknown",
 				slot: slot || null,
 				ideaToken: ideaToken || null,
 				cost: cost === undefined ? null : Number(cost),
+				traits,
 			});
 		}
 	}
@@ -692,9 +699,11 @@ function parseStateFactories(text, tags) {
 			if (!tag || !tags.has(tag)) continue;
 			const milMatch = /arms_factory=\{\s*level=(\d+)/.exec(stateBody);
 			const civMatch = /industrial_complex=\{\s*level=(\d+)/.exec(stateBody);
-			if (!totals[tag]) totals[tag] = { mil: 0, civ: 0 };
+			const dockyardMatch = /dockyard=\{\s*level=(\d+)/.exec(stateBody);
+			if (!totals[tag]) totals[tag] = { mil: 0, civ: 0, dockyard: 0 };
 			if (milMatch) totals[tag].mil += Number(milMatch[1]);
 			if (civMatch) totals[tag].civ += Number(civMatch[1]);
+			if (dockyardMatch) totals[tag].dockyard += Number(dockyardMatch[1]);
 		}
 	}
 	return totals;
@@ -797,7 +806,7 @@ function parseSave(text, targetTags) {
 			const body = bodies[bodies.length - 1];
 			countries[tag] = extractCountryFields(body);
 			if (countryDoctrines[tag]) countries[tag].doctrines = countryDoctrines[tag];
-			countries[tag].factories = stateFactories[tag] || { mil: 0, civ: 0 };
+			countries[tag].factories = stateFactories[tag] || { mil: 0, civ: 0, dockyard: 0 };
 			const templates = divisionTemplates[tag] || [];
 			const unitCounts = countries[tag].unitCounts || {};
 			countries[tag].armyTemplates = templates.map((tpl) => ({

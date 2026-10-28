@@ -105,6 +105,8 @@
   }
   .panel h2 { font-size: 14px; margin: 0 0 10px; color: var(--accent); text-transform: uppercase; letter-spacing: .04em; }
   .panel .sub { color: var(--muted); font-size: 12px; margin: -6px 0 10px; }
+  .rowSubNote { color: var(--muted); font-size: 11px; }
+  .replacedNote { color: var(--bad); opacity: .75; font-size: 11px; }
 
   .scroll { max-height: 340px; overflow-y: auto; }
 
@@ -220,6 +222,7 @@ let equipmentRoster = new Map(); // equipmentVariantId -> archetype id (e.g. "li
 let selectedTag = null;
 let selectedFocusEraTreeId = null; // null = "show the most recent era" (reset whenever the selected country changes)
 let activeDoctrineFolder = "land"; // which of the Army/Navy/Air doctrine tabs is showing
+let armyViewMode = "current"; // "current" | "warEntry" — which Army sub-tab is showing
 let productionSliderIndex = null; // null = "show the latest snapshot" (reset whenever the selected country changes)
 let constructionSliderIndex = null; // same idea, for the separate Construction panel's own slider
 let worker = null;
@@ -606,42 +609,18 @@ function svgText(x, y, text, opts) {
   return `<text x="${x}" y="${y}" font-size="${size}" fill="${color}" font-weight="${weight}" text-anchor="${anchor}">${escapeXML(text)}</text>`;
 }
 
-// Chronological list of actual PP spends: laws adopted + advisors appointed. Law REMOVALS
-// are deliberately skipped — a law getting replaced by a new one is implied by the new one
-// showing up, not a separate line item — but an advisor leaving a slot isn't shown either
-// here since the poster is about what was BOUGHT, not departures; the slot being filled
-// again later still shows as its own purchase. National spirits (non-law ppEvents) aren't
-// PP purchases, so they're excluded too.
-function buildPPBuyOrder(t) {
-  const items = [];
-  for (const e of t.ppEvents) {
-    if (e.kind !== "idea_adopted") continue;
-    const info = resolveIdeaLabel(e.label);
-    if (!info.isLaw) continue;
-    items.push({ date: e.date, label: info.name });
-  }
-  for (const e of t.advisorEvents) {
-    if (e.kind === "appointed" || e.kind === "appointed_before_tracking") {
-      items.push({ date: e.date, label: `Advisor: ${advisorDisplayName(e.characterId)}` });
-    }
-  }
-  items.sort((a, b) => HOI4Parser.dateSortKey(a.date) - HOI4Parser.dateSortKey(b.date));
-  return items;
-}
-
-// Which tech CATEGORIES this country most consistently researches ahead of schedule — same
-// "ahead" threshold the Research panel itself uses, just tallied by category instead of
-// listed per-tech, e.g. "Research focused: Tank Chassis, Anti Air" rather than raw tech ids.
-function buildResearchFocusSummary(t) {
-  const counts = new Map();
-  for (const tech of t.researchTimeline) {
-    const diff = techYearDiff(tech.id, tech.date);
-    if (diff == null || diff < 0.45) continue;
-    const category = resolveTechCategory(tech.id);
-    if (!category) continue;
-    counts.set(category, (counts.get(category) || 0) + 1);
-  }
-  return [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6).map(([category]) => category);
+// A node's order number ("#3") rendered noticeably bigger/bolder than the date next to it —
+// per the user, the ORDER matters more at a glance than the exact date, for both the focus
+// tree and the MIO tree. One <text> with two <tspan>s (not two separate <text> elements) so
+// text-anchor="middle" on the parent still centers the whole "#3 · Apr 1, 1939" run as a unit.
+function svgRankDateLabel(cx, y, rank, dateText, color, opts) {
+  opts = opts || {};
+  const rankSize = opts.rankSize || 11;
+  const dateSize = opts.dateSize || 7;
+  return `<text x="${cx}" y="${y}" text-anchor="middle">` +
+    `<tspan font-size="${rankSize}" font-weight="700" fill="${color}">#${rank}</tspan>` +
+    `<tspan font-size="${dateSize}" fill="${color}" opacity="0.8"> · ${escapeXML(dateText)}</tspan>` +
+    `</text>`;
 }
 
 // "The amount of civs they build before stopping" — most countries grow civilian factories
@@ -740,9 +719,70 @@ function buildCardSVG(x, y, w, title, lines) {
   return { svg, height: h };
 }
 
-// Stitches several sections (header, PP buy order, research focus, army composition, civ
-// cap) plus the EXISTING focus-tree SVG content into one tall combined SVG, then reuses the
-// exact same svgMarkupToPNG pipeline as the standalone focus-tree export.
+// A proper Since/Slot/Name/Cost table in SVG, fed the exact same row data (buildAdvisorLawRows)
+// as the live Political Power table — replaces the poster's old plain "date — label" line list,
+// so the poster shows the same replaced-X / tagline detail the live app has, not a stripped-
+// down summary of it.
+function buildPPTableCardSVG(x, y, w, title, rows) {
+  const PADDING = 20, TITLE_H = 34, HEADER_ROW_H = 20, ROW_MAIN_H = 20, SUBLINE_H = 13;
+  const colSince = x + PADDING;
+  const colSlot = colSince + 76;
+  const colName = colSlot + 120;
+  const colCostRight = x + w - PADDING;
+  const nameMaxWidth = Math.max(80, colCostRight - colName - 10);
+
+  const ROW_LIMIT = 26;
+  const shown = rows.slice(0, ROW_LIMIT);
+  const hiddenCount = rows.length - shown.length;
+
+  const headerY = y + PADDING + TITLE_H + 10;
+  let ly = headerY + HEADER_ROW_H;
+  let body = "";
+  for (const r of shown) {
+    const sinceText = r.sinceDate ? fmtDate(r.sinceDate) : "before tracking";
+    let rowSvg = `<g>`;
+    rowSvg += svgText(colSince, ly, sinceText, { size: 11, color: "#9098ab" });
+    rowSvg += svgText(colSlot, ly, r.slot, { size: 11, color: "#9098ab" });
+    rowSvg += svgText(colName, ly, r.name, { size: 13 });
+    rowSvg += svgText(colCostRight, ly, r.cost, { size: 11, color: "#9098ab", anchor: "end" });
+    let sy = ly + SUBLINE_H + 3;
+    let subLineCount = 0;
+    const subNotes = [];
+    if (r.tagline) subNotes.push({ text: r.tagline, color: "#9098ab" });
+    if (r.replacedWith) subNotes.push({ text: `replaced ${r.replacedWith}`, color: "#ff6b6b" });
+    for (const note of subNotes) {
+      for (const sub of wrapSvgText(note.text, nameMaxWidth, 10)) {
+        rowSvg += svgText(colName, sy, sub, { size: 10, color: note.color });
+        sy += SUBLINE_H;
+        subLineCount++;
+      }
+    }
+    rowSvg += `</g>`;
+    body += rowSvg;
+    ly += ROW_MAIN_H + subLineCount * SUBLINE_H + 4;
+  }
+  if (!shown.length) {
+    body += svgText(colSince, ly, "No data", { size: 13, color: "#9098ab" });
+    ly += ROW_MAIN_H;
+  } else if (hiddenCount > 0) {
+    body += svgText(colSince, ly, `+${hiddenCount} more`, { size: 11, color: "#9098ab" });
+    ly += ROW_MAIN_H;
+  }
+
+  const h = ly - y + PADDING - 6;
+  let svg = svgCardBg(x, y, w, h);
+  svg += svgText(x + PADDING, y + PADDING + 20, title, { size: 19, weight: 700, color: "#5fb0ff" });
+  svg += svgText(colSince, headerY, "SINCE", { size: 9, color: "#5b6376" });
+  svg += svgText(colSlot, headerY, "SLOT", { size: 9, color: "#5b6376" });
+  svg += svgText(colName, headerY, "NAME", { size: 9, color: "#5b6376" });
+  svg += svgText(colCostRight, headerY, "COST", { size: 9, color: "#5b6376", anchor: "end" });
+  svg += body;
+  return { svg, height: h };
+}
+
+// Stitches several sections (header, PP buy table, army composition, civ cap) plus the
+// EXISTING focus-tree SVG content into one tall combined SVG, then reuses the exact same
+// svgMarkupToPNG pipeline as the standalone focus-tree export.
 // Formats one army template as a {title, composition} pair for a card: name+count as the
 // bold line, full combat/support breakdown as a wrapped sub-line underneath — reused for
 // both the current roster and the war-entry snapshot so they read identically.
@@ -784,8 +824,9 @@ function exportCountryPosterPNG(tag) {
 
   const parts = [];
 
-  // Header band
-  const headerHeight = 130;
+  // Header band — country info on the left, war entry date + civ factory cap stacked on the
+  // right (civ cap used to be its own card below; folded up here per the user instead).
+  const headerHeight = 150;
   parts.push(`<rect x="0" y="0" width="${WIDTH}" height="${headerHeight}" fill="#1b1f27"/>`);
   parts.push(`<rect x="0" y="0" width="12" height="${headerHeight}" fill="${accent}"/>`);
   parts.push(svgText(PAD + 14, 48, TAG_NAMES[tag] || tag, { size: 38, weight: 700, color: accent }));
@@ -798,30 +839,34 @@ function exportCountryPosterPNG(tag) {
   }
   const warDate = WAR_ENTRY_DATES[tag];
   if (warDate) {
-    parts.push(svgText(WIDTH - PAD, 48, "Historical war entry", { size: 14, color: "#9098ab", anchor: "end" }));
-    parts.push(svgText(WIDTH - PAD, 76, fmtDate(warDate), { size: 20, weight: 700, color: accent, anchor: "end" }));
+    parts.push(svgText(WIDTH - PAD, 40, "Historical war entry", { size: 13, color: "#9098ab", anchor: "end" }));
+    parts.push(svgText(WIDTH - PAD, 64, fmtDate(warDate), { size: 18, weight: 700, color: accent, anchor: "end" }));
+  }
+  const civPlateau = buildCivFactoryPlateau(t, tag);
+  if (civPlateau) {
+    parts.push(svgText(WIDTH - PAD, 96, "Civilian factories", { size: 13, color: "#9098ab", anchor: "end" }));
+    parts.push(svgText(WIDTH - PAD, 120, `${civPlateau.civ} (${civPlateau.stillGrowing ? "still growing" : "capped"})`, { size: 18, weight: 700, color: accent, anchor: "end" }));
   }
 
-  // 2x2 card grid: PP buys + current army on row 1, war-entry army + research/industry on
-  // row 2 — each card sized to its own content, each row's height set by its taller card, so
-  // uneven content (a long PP buy list vs. a short research summary) never overlaps or
-  // leaves an awkwardly empty card.
+  // Two columns, each with its own independent height: col 1 is the PP table (often the
+  // tallest single thing here once full advisor+law history is shown), col 2 stacks the
+  // current army composition directly above the army-at-war-entry snapshot — same column,
+  // so they read as a before/after pair rather than being split diagonally across the grid.
   const colW = (GRID_WIDTH - PAD) / 2;
   const col1X = PAD, col2X = PAD * 2 + colW;
-  let gridY = headerHeight + PAD;
+  let col1Y = headerHeight + PAD;
+  let col2Y = headerHeight + PAD;
 
-  const ppBuys = buildPPBuyOrder(t);
-  const PP_ROW_LIMIT = 20;
-  const ppLines = ppBuys.slice(0, PP_ROW_LIMIT).map((item) => ({ text: `${fmtDate(item.date)} — ${item.label}`, size: 14 }));
-  if (ppBuys.length > PP_ROW_LIMIT) ppLines.push({ text: `+${ppBuys.length - PP_ROW_LIMIT} more`, size: 12, color: "#9098ab" });
-  const ppCard = buildCardSVG(col1X, gridY, colW, "Political Power Purchases", ppLines);
+  const ppRows = buildAdvisorLawRows(t);
+  const ppCard = buildPPTableCardSVG(col1X, col1Y, colW, "Political Power Purchases", ppRows);
+  parts.push(ppCard.svg);
+  col1Y += ppCard.height + PAD;
 
   const activeTemplates = (t.currentArmyTemplates || []).filter((tpl) => tpl.count > 0).sort((a, b) => b.count - a.count).slice(0, 6);
   const armyLines = activeTemplates.flatMap(formatTemplateCardLines);
-  const armyCard = buildCardSVG(col2X, gridY, colW, "Army Composition (current)", armyLines);
-
-  parts.push(ppCard.svg, armyCard.svg);
-  gridY += Math.max(ppCard.height, armyCard.height) + PAD;
+  const armyCard = buildCardSVG(col2X, col2Y, colW, "Army Composition (current)", armyLines);
+  parts.push(armyCard.svg);
+  col2Y += armyCard.height + PAD;
 
   const warSnapshot = warDate ? findArmyTemplatesNearDate(tag, warDate) : null;
   const warLines = [];
@@ -835,29 +880,12 @@ function exportCountryPosterPNG(tag) {
   } else {
     warLines.push({ text: "No data available", size: 14, color: "#9098ab" });
   }
-  const warCard = buildCardSVG(col1X, gridY, colW, "Army at War Entry", warLines);
+  const warCard = buildCardSVG(col2X, col2Y, colW, "Army at War Entry", warLines);
+  parts.push(warCard.svg);
+  col2Y += warCard.height + PAD;
 
-  const researchFocus = buildResearchFocusSummary(t);
-  const civPlateau = buildCivFactoryPlateau(t, tag);
-  const riLines = [{
-    text: researchFocus.length ? `Research focused: ${researchFocus.join(", ")}` : "No standout research focus detected",
-    size: 14, color: researchFocus.length ? "#e6e9ef" : "#9098ab",
-  }];
-  if (civPlateau) {
-    riLines.push({
-      text: civPlateau.stillGrowing
-        ? `Civilian factories still growing — ${civPlateau.civ} as of ${fmtDate(civPlateau.date)}`
-        : `Civilian factories capped at ${civPlateau.civ} (reached ${fmtDate(civPlateau.date)})`,
-      size: 14,
-    });
-  }
-  const riCard = buildCardSVG(col2X, gridY, colW, "Research & Industry", riLines);
-
-  parts.push(warCard.svg, riCard.svg);
-  gridY += Math.max(warCard.height, riCard.height) + PAD;
-
-  // Focus tree, offset below everything else
-  const treeY = gridY;
+  // Focus tree, offset below whichever column ran longer
+  const treeY = Math.max(col1Y, col2Y);
   parts.push(`<g transform="translate(0, ${treeY})">${treeInner}</g>`);
   const totalHeight = treeY + treeHeight + PAD;
 
@@ -947,14 +975,21 @@ function renderFocusMapPanel(t, tag) {
     // "#N" = the Nth focus this country actually completed, in chronological order — same
     // order the color gradient above is keyed on, so the number and the color always agree.
     const rank = isDone ? completionRank.get(f.id) : null;
-    const dateNote = isDone && t.completedFocusDates[f.id]
-      ? escapeXML(`#${rank + 1} · ${fmtDate(t.completedFocusDates[f.id])}`)
+    // Per the user, the ORDER number matters more at a glance than the exact date — rendered
+    // bigger/bold via its own tspan, with the date shrunk down next to it, rather than both
+    // the same size (see svgRankDateLabel).
+    const hasDate = isDone && t.completedFocusDates[f.id];
+    const dateNotePlain = hasDate
+      ? `#${rank + 1} · ${fmtDate(t.completedFocusDates[f.id])}`
       : (isCurrent ? `progress ${current.progress ?? "?"}` : "");
+    const dateNoteSvg = hasDate
+      ? svgRankDateLabel(x + NODE_W / 2, y + 30, rank + 1, fmtDate(t.completedFocusDates[f.id]), textColor)
+      : (isCurrent ? svgText(x + NODE_W / 2, y + 30, dateNotePlain, { size: 8, color: textColor, anchor: "middle" }) : "");
     nodes += `<g class="focusNode">
-      <title>${escapeXML(f.name)} (${f.id})\nCost: ${f.cost * 7}d${dateNote ? "\n" + dateNote : ""}</title>
+      <title>${escapeXML(f.name)} (${f.id})\nCost: ${f.cost * 7}d${dateNotePlain ? "\n" + escapeXML(dateNotePlain) : ""}</title>
       <rect x="${x}" y="${y}" width="${NODE_W}" height="${NODE_H}" rx="6" fill="${fill}" stroke="${stroke}" stroke-width="${isCurrent || isDone ? 2 : 1.5}"/>
       <text x="${x + NODE_W/2}" y="${y + 16}" text-anchor="middle" font-size="9" fill="${textColor}" font-weight="${isDone||isCurrent?600:400}">${label}</text>
-      ${dateNote ? `<text x="${x + NODE_W/2}" y="${y + 30}" text-anchor="middle" font-size="8" fill="${textColor}" opacity="0.75">${dateNote}</text>` : ""}
+      ${dateNoteSvg}
     </g>`;
   }
 
@@ -1018,6 +1053,18 @@ function resolveIdeaLabel(id) {
 function advisorDisplayName(characterId) {
   const info = advisorRoster.get(characterId);
   return info ? resolveCharacterName(info.ideaToken || info.name) : `#${characterId}`;
+}
+
+// The advisor's own flavor tagline (e.g. "Screens (Expert)", "Silent Workhorse") — a separate
+// trait field from their slot idea, resolved through advisor-traits.json (see
+// extract-advisor-traits.js). Most advisors have exactly one; if somehow more than one is
+// present, only the first is shown rather than cluttering the table.
+function advisorTagline(characterId) {
+  const info = advisorRoster.get(characterId);
+  const token = info && info.traits && info.traits[0];
+  if (!token) return null;
+  const traits = window.ADVISOR_TRAITS || {};
+  return traits[token] || prettifyToken(token);
 }
 
 // equipmentRoster maps a production line's numeric equipment_variant_index to the
@@ -1172,20 +1219,99 @@ function computePPReconciliation(t) {
   return out;
 }
 
+// Full build history, not just current state: every tenure (advisor appointment, law
+// adoption) gets its own row, oldest to newest, not only whoever/whatever is active right
+// now — per the user, this is a build-tracking tool, so the intermediate steps matter as
+// much as the final result. Unlike an earlier version of this, a superseded tenure is NOT
+// dimmed or given an "until DATE" note — per the user, that made a replaced advisor's row
+// look like something had failed to update rather than like real history; the "replaced X"
+// note on whoever came after already makes the chain readable via plain chronological order.
+// Plain-field rows (no HTML) so both the live HTML table AND the poster's SVG table render
+// from the exact same data instead of two copies of this pairing/replacement logic drifting
+// apart — see renderPoliticalPowerPanel (HTML) and buildPPTableCardSVG (poster) below.
+function buildAdvisorLawRows(t) {
+  // Queues of same-slot dismissals, keyed by "slot|date" — lets a newly-appointed advisor be
+  // paired with whoever left the SAME slot on the SAME date (i.e. who they actually replaced,
+  // not just anyone dismissed that day). A multi-seat slot (e.g. High Command) can see more
+  // appointments than dismissals on one date; extra appointees just don't get a "replaced"
+  // note, which is correct — they filled an opening, not a specific person's seat.
+  const dismissedQueue = new Map();
+  for (const e of t.advisorEvents) {
+    if (e.kind !== "dismissed" || !e.slot) continue;
+    const key = `${e.slot}|${e.date}`;
+    if (!dismissedQueue.has(key)) dismissedQueue.set(key, []);
+    dismissedQueue.get(key).push(e.characterId);
+  }
+
+  const rows = [];
+  for (const e of t.advisorEvents) {
+    if (e.kind !== "appointed" && e.kind !== "appointed_before_tracking") continue;
+    const known = e.kind === "appointed";
+    const info = advisorRoster.get(e.characterId);
+    let replacedWith = null;
+    if (known) {
+      const queue = dismissedQueue.get(`${e.slot}|${e.date}`);
+      if (queue && queue.length) replacedWith = advisorDisplayName(queue.shift());
+    }
+    rows.push({
+      sortKey: known ? HOI4Parser.dateSortKey(e.date) : -1,
+      // A baseline "before tracking" entry's date is just the first loaded save's date, not
+      // their true appointment date — showing it as a hard date would be misleading.
+      sinceDate: known ? e.date : null,
+      slot: prettifyToken(e.slot),
+      name: advisorDisplayName(e.characterId),
+      tagline: advisorTagline(e.characterId),
+      replacedWith,
+      cost: `${info?.cost ?? "?"} PP`,
+    });
+  }
+  for (const e of t.ppEvents) {
+    if (e.kind !== "idea_adopted") continue;
+    const info = resolveIdeaLabel(e.label);
+    // Unlike an advisor (always a deliberate hire), a law with no adoption EVENT is just
+    // whatever this category defaulted to at game start — iterating ppEvents (rather than
+    // t.currentIdeas) already skips those on its own, since a never-changed default never
+    // generates an idea_adopted event in the first place.
+    if (!info.isLaw) continue;
+    // Same "replaced X" idea as the advisor rows above: find whichever law in the SAME
+    // category got removed on the SAME date this one was adopted (same pairing logic
+    // resolveLawEventCost already uses to price a leveled law jump).
+    const windowEvents = t.ppEvents.filter((ev) => ev.date === e.date);
+    const removedInCategory = windowEvents.find((ev) => {
+      if (ev.kind !== "idea_removed") return false;
+      const rInfo = resolveIdeaLabel(ev.label);
+      return rInfo.isLaw && rInfo.category === info.category;
+    });
+    rows.push({
+      sortKey: HOI4Parser.dateSortKey(e.date),
+      sinceDate: e.date,
+      slot: info.category,
+      name: info.name,
+      tagline: null,
+      replacedWith: removedInCategory ? resolveIdeaLabel(removedInCategory.label).name : null,
+      cost: info.cost != null ? `${info.cost} PP` : "?",
+    });
+  }
+  // Oldest -> newest; unknown/"before tracking" entries (sortKey -1) sort first, same
+  // convention as the focus map's own earliest-first ordering.
+  rows.sort((a, b) => a.sortKey - b.sortKey);
+  return rows;
+}
+
 function renderPoliticalPowerPanel(t) {
   let html = `<h2>Political Power</h2>`;
-  if (t.ppSeries.length) {
-    const now = t.ppSeries[t.ppSeries.length - 1].political_power;
-    html += `<div class="ppNow">${now.toFixed(1)} PP</div><div class="sub">as of ${fmtDate(t.ppSeries[t.ppSeries.length-1].date)}</div>`;
-  } else {
+  if (!t.ppSeries.length) {
     html += `<div class="empty">No political power data found.</div>`;
   }
 
-  if (t.currentAdvisors.length) {
-    html += `<table style="margin-top:10px"><thead><tr><th>Slot</th><th>Name</th><th>Cost</th></tr></thead><tbody>`;
-    for (const a of t.currentAdvisors) {
-      const info = advisorRoster.get(a.characterId);
-      html += `<tr><td>${escapeXML(prettifyToken(a.slot))}</td><td>${escapeXML(advisorDisplayName(a.characterId))}</td><td>${info?.cost ?? "?"} PP</td></tr>`;
+  if (t.currentAdvisors.length || (t.currentIdeas && t.currentIdeas.length)) {
+    const rows = buildAdvisorLawRows(t);
+    html += `<table style="margin-top:10px"><thead><tr><th>Since</th><th>Slot</th><th>Name</th><th>Cost</th></tr></thead><tbody>`;
+    for (const r of rows) {
+      const sinceLabel = r.sinceDate ? fmtDate(r.sinceDate) : `<span style="color:var(--muted)">before tracking</span>`;
+      const taglineNote = r.tagline ? `<div class="rowSubNote">${escapeXML(r.tagline)}</div>` : "";
+      const replacedNote = r.replacedWith ? `<div class="replacedNote">replaced ${escapeXML(r.replacedWith)}</div>` : "";
+      html += `<tr><td>${sinceLabel}</td><td>${escapeXML(r.slot)}</td><td>${escapeXML(r.name)}${taglineNote}${replacedNote}</td><td>${escapeXML(r.cost)}</td></tr>`;
     }
     html += `</tbody></table>`;
   }
@@ -1236,6 +1362,10 @@ function renderPoliticalPowerPanel(t) {
   const merged = [...advisorItems, ...lawItems, ...unexplainedItems].sort((a, b) => HOI4Parser.dateSortKey(a.date) - HOI4Parser.dateSortKey(b.date));
 
   html += `<details style="margin-top:10px"><summary class="sub" style="cursor:pointer">What happened to it</summary><div class="scroll">`;
+  if (t.ppSeries.length) {
+    const now = t.ppSeries[t.ppSeries.length - 1];
+    html += `<div class="ppNow">${now.political_power.toFixed(1)} PP</div><div class="sub">as of ${fmtDate(now.date)}</div>`;
+  }
   if (!merged.length) html += `<div class="empty">No advisor/law changes or unexplained balance shifts detected between loaded saves.</div>`;
   for (const item of merged) {
     html += `<div class="eventItem"><div class="date">${fmtDate(item.date)}</div><div>${item.html}</div></div>`;
@@ -1381,7 +1511,7 @@ function renderConstructionBreakdown(t, idx) {
   const construction = snap.lines.general_lines || [];
   let html = `<div id="constructionSliderLabel">Construction queue — ${fmtDate(snap.date)}</div>`;
 
-  // Current owned mil/civ factory count comes from summing state building levels (see
+  // Current owned mil/civ/dockyard count comes from summing state building levels (see
   // parseStateFactories in parser.js) — a country-level stat, not derivable from production
   // lines alone. "amount" on a construction entry is how many NEW levels that project is
   // building (not how many workers are on it — that's active_factories), so summing it by
@@ -1390,7 +1520,9 @@ function renderConstructionBreakdown(t, idx) {
     const queuedAmount = (template) => construction.filter((l) => l.template === template).reduce((sum, l) => sum + (l.amount || 0), 0);
     const queuedMil = queuedAmount("arms_factory");
     const queuedCiv = queuedAmount("industrial_complex");
-    html += `<div class="factoryHeadline">Military Factories: <b>${snap.factories.mil}</b>${queuedMil ? `<span class="queuedNote"> (+${queuedMil} building)</span>` : ""} &nbsp;·&nbsp; Civilian Factories: <b>${snap.factories.civ}</b>${queuedCiv ? `<span class="queuedNote"> (+${queuedCiv} building)</span>` : ""}</div>`;
+    const queuedDockyard = queuedAmount("dockyard");
+    const stat = (label, count, queued) => `${label}: <b>${count}</b>${queued ? `<span class="queuedNote"> (+${queued} building)</span>` : ""}`;
+    html += `<div class="factoryHeadline">${stat("Military Factories", snap.factories.mil, queuedMil)} &nbsp;·&nbsp; ${stat("Civilian Factories", snap.factories.civ, queuedCiv)} &nbsp;·&nbsp; ${stat("Dockyards", snap.factories.dockyard || 0, queuedDockyard)}</div>`;
   }
 
   html += `<div class="scroll">`;
@@ -1400,7 +1532,13 @@ function renderConstructionBreakdown(t, idx) {
     html += `<table><thead><tr><th>Building</th><th>Location</th><th>Factories</th><th>Produced</th><th>Priority</th></tr></thead><tbody>`;
     for (const l of construction) {
       const buildingName = l.template ? prettifyToken(l.template) : "Unknown";
-      html += `<tr><td>${escapeXML(buildingName)}</td><td>${l.location ?? "?"}</td><td>${l.active_factories ?? 0}</td><td>${(l.produced ?? 0).toFixed(1)}</td><td>${l.priority ?? 0}</td></tr>`;
+      // l.location is a STATE id (see extract-state-names.js) — show the real state name, but
+      // keep the id alongside in brackets (per the user: it's a useful shortcut for jumping to
+      // that state in the game's own search tool), not just a silent fallback for when the
+      // name is unresolvable.
+      const stateName = l.location != null ? (window.STATE_NAMES || {})[l.location] : null;
+      const locationLabel = l.location == null ? "?" : stateName ? `${escapeXML(stateName)} (${l.location})` : l.location;
+      html += `<tr><td>${escapeXML(buildingName)}</td><td>${locationLabel}</td><td>${l.active_factories ?? 0}</td><td>${(l.produced ?? 0).toFixed(1)}</td><td>${l.priority ?? 0}</td></tr>`;
     }
     html += `</tbody></table>`;
   }
@@ -1492,6 +1630,30 @@ function renderTemplateRow(tpl) {
   return `<tr><td><b>${escapeXML(tpl.name)}</b>${compHtml}</td><td>${tpl.count}</td></tr>`;
 }
 
+// Shared by both the "current" and "at war entry" army views — same active/unused split and
+// table shape either way, just fed a different snapshot of templates.
+function renderTemplateTable(templates, emptyMessage) {
+  const active = templates.filter((tpl) => tpl.count > 0).sort((a, b) => b.count - a.count);
+  const unused = templates.filter((tpl) => tpl.count === 0).sort((a, b) => a.name.localeCompare(b.name));
+
+  let html = `<div class="scroll">`;
+  if (!active.length) {
+    html += `<div class="empty">${emptyMessage}</div>`;
+  } else {
+    html += `<table><thead><tr><th>Template</th><th>Divisions</th></tr></thead><tbody>`;
+    for (const tpl of active) html += renderTemplateRow(tpl);
+    html += `</tbody></table>`;
+  }
+  if (unused.length) {
+    html += `<details class="unusedTemplates"><summary>Unused templates (${unused.length})</summary>
+      <table><thead><tr><th>Template</th><th>Divisions</th></tr></thead><tbody>`;
+    for (const tpl of unused) html += renderTemplateRow(tpl);
+    html += `</tbody></table></details>`;
+  }
+  html += `</div>`;
+  return html;
+}
+
 // Each badge carries the ACTION (new/deleted/±delta); the text never repeats what the badge
 // already said (no "raised"/"deleted" verb next to a badge already saying NEW/DELETED, no
 // full "0 -> 33" math next to a badge already saying "+33") — one fact, one place.
@@ -1527,33 +1689,37 @@ function renderArmyEvents(events) {
   return html;
 }
 
+// The war-entry snapshot used to only exist baked into the poster export (findArmyTemplatesNearDate,
+// WAR_ENTRY_DATES) — surfaced here as a second tab so it's checkable without exporting anything.
 function renderArmyPanel(t) {
   let html = `<h2>Army</h2>`;
   const templates = t.currentArmyTemplates || [];
   if (!templates.length) { html += `<div class="empty">No division template data found.</div>`; return html; }
 
+  const warDate = WAR_ENTRY_DATES[t.tag];
+  if (warDate) {
+    html += `<div style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:10px;">
+      <button class="tab${armyViewMode === "current" ? " active" : ""}" onclick="armyViewMode='current';renderMain();">Current</button>
+      <button class="tab${armyViewMode === "warEntry" ? " active" : ""}" onclick="armyViewMode='warEntry';renderMain();">At War Entry</button>
+    </div>`;
+  } else {
+    armyViewMode = "current"; // no benchmark date for this tag — never show the dead-end tab
+  }
+
+  if (armyViewMode === "warEntry" && warDate) {
+    const snapshot = findArmyTemplatesNearDate(t.tag, warDate);
+    html += `<div class="sub">Historical war entry: ${fmtDate(warDate)}</div>`;
+    if (!snapshot) { html += `<div class="empty">No save data available yet for this country's war entry.</div>`; return html; }
+    if (HOI4Parser.dateSortKey(snapshot.date) !== HOI4Parser.dateSortKey(warDate)) {
+      html += `<div class="sub">Closest available save: ${fmtDate(snapshot.date)}</div>`;
+    }
+    html += renderTemplateTable(snapshot.templates, "No divisions deployed from any template at this point.");
+    return html;
+  }
+
   html += `<div class="sub">Changes</div>`;
   html += renderArmyEvents(t.armyEvents || []);
-
-  const active = templates.filter((tpl) => tpl.count > 0).sort((a, b) => b.count - a.count);
-  const unused = templates.filter((tpl) => tpl.count === 0).sort((a, b) => a.name.localeCompare(b.name));
-
-  html += `<div class="scroll">`;
-  if (!active.length) {
-    html += `<div class="empty">No divisions currently deployed from any template.</div>`;
-  } else {
-    html += `<table><thead><tr><th>Template</th><th>Divisions</th></tr></thead><tbody>`;
-    for (const tpl of active) html += renderTemplateRow(tpl);
-    html += `</tbody></table>`;
-  }
-
-  if (unused.length) {
-    html += `<details class="unusedTemplates"><summary>Unused templates (${unused.length})</summary>
-      <table><thead><tr><th>Template</th><th>Divisions</th></tr></thead><tbody>`;
-    for (const tpl of unused) html += renderTemplateRow(tpl);
-    html += `</tbody></table></details>`;
-  }
-  html += `</div>`;
+  html += renderTemplateTable(templates, "No divisions currently deployed from any template.");
   return html;
 }
 
@@ -1667,11 +1833,29 @@ function renderMIOTree(org, t) {
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const unlocked = new Set(org.traits || []);
 
-  // Normally each node is unlocked exactly once, so last-write-wins is fine either way.
+  // unlockOrder is already in true chronological order — mioEvents are pushed save-by-save as
+  // saves are processed oldest to newest (same invariant renderFocusMapPanel's completedFocuses
+  // relies on for its rainbow). Normally each node is unlocked exactly once, so last-write-wins
+  // on the date is fine either way.
   const unlockDate = new Map();
+  const unlockOrder = [];
   for (const e of t.mioEvents || []) {
-    if (e.kind === "upgrade_unlocked" && e.orgId === org.id) unlockDate.set(e.trait, e.date);
+    if (e.kind === "upgrade_unlocked" && e.orgId === org.id) {
+      unlockDate.set(e.trait, e.date);
+      unlockOrder.push(e.trait);
+    }
   }
+  // An unlocked node with no event at all was already unlocked in the very first loaded save
+  // (never diffed into existence) — same "established_before_tracking" idea as every other
+  // panel. Order those by tree position (tier then column) and place them BEFORE every dated
+  // one, so the rainbow still reads as "earliest -> latest" even though their exact order
+  // relative to each other is unknown.
+  const dated = new Set(unlockOrder);
+  const baseline = [...unlocked].filter((id) => !dated.has(id) && byId.has(id))
+    .sort((a, b) => (byId.get(a).y - byId.get(b).y) || (byId.get(a).x - byId.get(b).x));
+  const rankOrder = [...baseline, ...unlockOrder];
+  const unlockRank = new Map(rankOrder.map((id, i) => [id, i]));
+  const maxRank = Math.max(0, rankOrder.length - 1);
 
   const COL_W = 98, ROW_H = 48, NODE_W = 90, NODE_H = 34;
   const minX = Math.min(...nodes.map((n) => n.x));
@@ -1701,16 +1885,29 @@ function renderMIOTree(org, t) {
     const x = px(n.x), y = py(n.y);
     const isUnlocked = unlocked.has(n.id);
     const date = unlockDate.get(n.id);
+    const rank = unlockRank.get(n.id);
     let fill = "#2a2f3a", stroke = "#454d5e", textColor = "#9098ab";
-    if (isUnlocked) { fill = "#1d3a28"; stroke = "#6fd08c"; textColor = "#bdeccb"; }
+    if (isUnlocked) {
+      // Same rainbow sweep as the focus map (completionRankHue): earliest unlock blue-violet,
+      // latest red — makes the actual pick ORDER visible at a glance, not just locked/unlocked.
+      const hue = rank !== undefined ? completionRankHue(rank, maxRank) : 120;
+      fill = `hsl(${hue}, 35%, 16%)`; stroke = `hsl(${hue}, 55%, 55%)`; textColor = `hsl(${hue}, 60%, 78%)`;
+    }
     const label = escapeXML(n.name.length > 20 ? n.name.slice(0, 19) + "…" : n.name);
-    const dateLabel = date ? fmtDate(date) : (isUnlocked ? "before tracking" : "");
-    const titleDate = date ? `\nUnlocked ${fmtDate(date)}` : (isUnlocked ? "\nUnlocked before this dataset started" : "\nNot yet unlocked");
+    // Per the user, the order number matters more than the exact date — bigger/bold tspan via
+    // svgRankDateLabel (same treatment as the focus map), sized down slightly from the focus
+    // tree's version since this node box is smaller (NODE_H 34 vs 40).
+    const hasRank = isUnlocked && rank !== undefined;
+    const dateNotePlain = date ? (hasRank ? `#${rank + 1} · ` : "") + fmtDate(date) : (isUnlocked ? (hasRank ? `#${rank + 1} · ` : "") + "before tracking" : "");
+    const dateNoteSvg = !dateNotePlain ? "" : hasRank
+      ? svgRankDateLabel(x + NODE_W / 2, y + 27, rank + 1, date ? fmtDate(date) : "before tracking", textColor, { rankSize: 9, dateSize: 6.5 })
+      : svgText(x + NODE_W / 2, y + 27, dateNotePlain, { size: 7.5, color: textColor, anchor: "middle" });
+    const titleDate = date ? `\nUnlocked ${fmtDate(date)} (#${rank + 1} of ${rankOrder.length})` : (isUnlocked ? `\nUnlocked before this dataset started (#${rank + 1} of ${rankOrder.length})` : "\nNot yet unlocked");
     boxes += `<g>
       <title>${escapeXML(n.name + titleDate)}</title>
       <rect x="${x}" y="${y}" width="${NODE_W}" height="${NODE_H}" rx="5" fill="${fill}" stroke="${stroke}" stroke-width="${isUnlocked ? 2 : 1.5}"/>
       <text x="${x + NODE_W / 2}" y="${y + 14}" text-anchor="middle" font-size="9" fill="${textColor}" font-weight="${isUnlocked ? 600 : 400}">${label}</text>
-      ${dateLabel ? `<text x="${x + NODE_W / 2}" y="${y + 27}" text-anchor="middle" font-size="7.5" fill="${textColor}" opacity="0.75">${escapeXML(dateLabel)}</text>` : ""}
+      ${dateNoteSvg}
     </g>`;
   }
 
@@ -1729,15 +1926,21 @@ function renderMIOPanel(t) {
   html += `<div class="sub">Changes</div>`;
   html += renderMIOEvents(t.mioEvents || []);
 
-  const orgNames = window.MIO_TRAITS && window.MIO_TRAITS.orgs;
+  const orgInfo = window.MIO_TRAITS && window.MIO_TRAITS.orgs;
   html += `<div class="scroll">`;
   for (const org of [...mios].sort((a, b) => b.size - a.size)) {
     const policyLabel = org.policy ? escapeXML(prettifyToken(org.policy)) : `<span style="color:var(--muted)">None chosen</span>`;
-    const orgName = (orgNames && orgNames[org.id]) || prettifyToken(org.id);
+    const info = orgInfo && orgInfo[org.id];
+    const orgName = (info && info.name) || prettifyToken(org.id);
+    // A country-specific org (e.g. ENG_supermarine_organization) rarely says what TYPE of
+    // designer it is in its own name — that comes from whichever archetype it `include`s
+    // (e.g. "High Agility Fighter Aircraft Designer"), shown here so it's not just a bare name.
+    const baseTypeNote = info && info.baseType ? `<div class="mioOrgMeta">${escapeXML(info.baseType)}</div>` : "";
     const upgradeCount = (org.traits || []).length;
     html += `<details class="mioOrg">
       <summary>
         <span class="mioOrgName">${escapeXML(orgName)}</span>
+        ${baseTypeNote}
         <span class="mioOrgMeta">Level ${org.size} · ${org.funds.toFixed(1)} funds · ${policyLabel} · ${upgradeCount} upgrade${upgradeCount === 1 ? "" : "s"}</span>
       </summary>
       ${renderMIOTree(org, t)}
@@ -1787,9 +1990,34 @@ function renderSpyAgencyPanel(t) {
 
   const upgradeEntries = Object.entries(agency.upgrades || {});
   if (upgradeEntries.length) {
-    html += `<table style="margin-top:10px"><thead><tr><th>Upgrade</th><th>Level</th></tr></thead><tbody>`;
-    for (const [key, level] of upgradeEntries) {
-      html += `<tr><td>${escapeXML(prettifyToken(key))}</td><td>${level}</td></tr>`;
+    // Same "show the steps, not just the final state" treatment as the Political Power
+    // table: every level-up is its own row, oldest to newest, so the ORDER upgrades were
+    // bought in is visible — not just what level each category eventually landed on.
+    const stepsByKey = new Map();
+    for (const e of t.spyAgencyEvents || []) {
+      if (e.kind !== "upgrade_leveled") continue;
+      if (!stepsByKey.has(e.upgradeKey)) stepsByKey.set(e.upgradeKey, []);
+      stepsByKey.get(e.upgradeKey).push(e);
+    }
+    const rows = [];
+    for (const [key, currentLevel] of upgradeEntries) {
+      const steps = stepsByKey.get(key) || [];
+      if (!steps.length) {
+        // Already at this level before tracking began — no event to date it by, so show it
+        // once as the current state (same convention as "before tracking" elsewhere).
+        rows.push({ sortKey: -1, dateLabel: `<span style="color:var(--muted)">before tracking</span>`, key, level: currentLevel, ended: false });
+        continue;
+      }
+      steps.forEach((e, i) => {
+        rows.push({ sortKey: HOI4Parser.dateSortKey(e.date), dateLabel: fmtDate(e.date), key, level: e.to, ended: i < steps.length - 1 });
+      });
+    }
+    rows.sort((a, b) => a.sortKey - b.sortKey);
+
+    html += `<table style="margin-top:10px"><thead><tr><th>Since</th><th>Upgrade</th><th>Level</th></tr></thead><tbody>`;
+    for (const r of rows) {
+      const rowOpen = r.ended ? `<tr style="opacity:.55">` : `<tr>`;
+      html += `${rowOpen}<td>${r.dateLabel}</td><td>${escapeXML(prettifyToken(r.key))}</td><td>${r.level}</td></tr>`;
     }
     html += `</tbody></table>`;
   }
@@ -1875,6 +2103,8 @@ el("cacheInput").onchange = (e) => { if (e.target.files[0]) loadCache(e.target.f
 <script>window.COUNTRY_COLORS = /*__COUNTRY_COLORS__*/;</script>
 <script>window.DOCTRINES = /*__DOCTRINES__*/;</script>
 <script>window.MIO_TRAITS = /*__MIO_TRAITS__*/;</script>
+<script>window.ADVISOR_TRAITS = /*__ADVISOR_TRAITS__*/;</script>
+<script>window.STATE_NAMES = /*__STATE_NAMES__*/;</script>
 <script>/*__PARSER_SOURCE__*/</script>
 <script>/*__TIMELINE_BUILDER_SOURCE__*/</script>
 </body>
